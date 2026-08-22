@@ -9,6 +9,7 @@ import (
 	"log-collector/internal/config"
 	"log-collector/internal/discovery"
 	"log-collector/internal/exporter"
+	"log-collector/internal/flowcontrol"
 	"log-collector/internal/logging"
 	"log-collector/internal/model"
 	"log-collector/internal/state"
@@ -45,7 +46,8 @@ func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
 	if err != nil {
 		return err
 	}
-	tail := tailer.New(store, cfg.Performance, logger, exp.Enqueue)
+	limiter := flowcontrol.New(cfg.FlowControl, logger, exp.Enqueue)
+	tail := tailer.New(store, cfg.Performance, logger, limiter.Submit)
 
 	loopCtx, stopLoops := context.WithCancel(context.Background())
 	exportCtx, stopExporter := context.WithCancel(context.Background())

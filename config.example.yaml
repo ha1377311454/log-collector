@@ -37,6 +37,19 @@ performance:
   # 已消失文件的发现记录和 inode 位点保留时间。
   cache_ttl: 24h
 
+# 全局日志流控，作用于 Tailer 与 Exporter 内存队列之间。
+flow_control:
+  # 默认关闭；关闭时所有日志直接进入 Exporter 队列。
+  enabled: false
+  # 稳态每秒允许进入队列的日志记录数。
+  rate_per_second: 1000
+  # 令牌桶容量，允许短时间突发超过稳态速率。
+  burst: 2000
+  # block：等待令牌并向文件读取端反压；drop：立即丢弃超限日志。
+  mode: block
+  # drop 模式下汇总输出丢弃数量的最小时间间隔，避免逐条告警。
+  report_interval: 10s
+
 # 读取位点持久化配置。重启后根据 device:inode 从保存的 offset 继续读取。
 state:
   # 程序需要对父目录有创建和写入权限。

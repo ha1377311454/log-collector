@@ -12,6 +12,27 @@
 - 批量构造 OTLP Logs protobuf，通过 OTLP/HTTP 上报，支持 gzip、headers、超时和指数退避重试。
 - 进程快照单次复用、固定读取 worker、dirty 位点刷盘、读取大小上限和 OTLP ResourceLogs 聚合。
 - 自身运行日志使用 zap，并通过 lumberjack 支持按大小滚动、历史数量、保留天数和 gzip 压缩。
+- 内置全局令牌桶流控，支持阻塞反压和超限丢弃两种模式。
+
+## 日志流控
+
+流控基于 `golang.org/x/time/rate`，位于文件读取与 OTLP Exporter 队列之间，默认关闭：
+
+```yaml
+flow_control:
+  enabled: true
+  rate_per_second: 1000
+  burst: 2000
+  mode: block
+  report_interval: 10s
+```
+
+- `block`：没有令牌时等待，将压力传递回文件读取 worker；不会主动丢弃日志。
+- `drop`：没有令牌时立即丢弃，适合优先保护 CPU 和内存的场景。丢弃量按 `report_interval` 汇总到自身日志。
+- `rate_per_second`：稳定速率，允许小数。
+- `burst`：令牌桶容量，决定瞬时突发量。
+
+流控只控制日志记录数量，不按日志字节数计算；单条和多行日志大小仍由 `performance` 中的大小限制负责。
 
 ## 自身日志
 

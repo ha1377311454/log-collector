@@ -17,6 +17,16 @@ type Config struct {
 	Sources     SourcesConfig     `yaml:"sources"`
 	Export      ExportConfig      `yaml:"export"`
 	Performance PerformanceConfig `yaml:"performance"`
+	FlowControl FlowControlConfig `yaml:"flow_control"`
+}
+
+// FlowControlConfig 控制进入 Exporter 队列前的全局日志速率。
+type FlowControlConfig struct {
+	Enabled        bool     `yaml:"enabled"`
+	RatePerSecond  float64  `yaml:"rate_per_second"`
+	Burst          int      `yaml:"burst"`
+	Mode           string   `yaml:"mode"`
+	ReportInterval Duration `yaml:"report_interval"`
 }
 
 // LogConfig 控制采集器自身运行日志，不影响被采集的业务日志。
@@ -142,6 +152,7 @@ func defaults() Config {
 	return Config{
 		Log: LogConfig{Level: "info", Format: "json", File: "./logs/log-collector.log", AlsoStdout: true, MaxSizeMB: 100, MaxBackups: 10, MaxAgeDays: 7, Compress: true}, State: StateConfig{Path: "./data/positions.json"},
 		Performance: PerformanceConfig{DiscoveryInterval: Duration{5 * time.Second}, ReadInterval: Duration{time.Second}, PositionFlushInterval: Duration{15 * time.Second}, WorkerCount: 4, MaxReadBytesPerFile: 4 * 1024 * 1024, MaxLogSize: 1024 * 1024, MaxMultilineSize: 4 * 1024 * 1024, MaxMultilineLines: 1000, CacheTTL: Duration{24 * time.Hour}},
+		FlowControl: FlowControlConfig{RatePerSecond: 1000, Burst: 2000, Mode: "block", ReportInterval: Duration{10 * time.Second}},
 		Export: ExportConfig{Timeout: Duration{10 * time.Second}, BatchSize: 500, FlushInterval: Duration{time.Second}, QueueSize: 10000,
 			Retry: RetryConfig{Enabled: true, Initial: Duration{time.Second}, MaxInterval: Duration{30 * time.Second}, MaxElapsed: Duration{5 * time.Minute}}},
 	}
@@ -175,6 +186,14 @@ func (c Config) Validate() error {
 	}
 	if c.Performance.WorkerCount <= 0 || c.Performance.MaxReadBytesPerFile <= 0 || c.Performance.MaxLogSize <= 0 || c.Performance.MaxMultilineSize <= 0 || c.Performance.MaxMultilineLines <= 0 || c.Performance.CacheTTL.Duration <= 0 {
 		return errors.New("performance limits must be positive")
+	}
+	if c.FlowControl.Enabled {
+		if c.FlowControl.RatePerSecond <= 0 || c.FlowControl.Burst <= 0 || c.FlowControl.ReportInterval.Duration <= 0 {
+			return errors.New("flow_control rate, burst and report_interval must be positive")
+		}
+		if c.FlowControl.Mode != "block" && c.FlowControl.Mode != "drop" {
+			return errors.New("flow_control.mode must be block or drop")
+		}
 	}
 	if c.Export.BatchSize <= 0 || c.Export.QueueSize <= 0 {
 		return errors.New("export batch_size and queue_size must be positive")

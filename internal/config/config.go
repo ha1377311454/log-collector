@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -66,7 +67,7 @@ type SourcesConfig struct {
 	Containers []FileRule    `yaml:"containers"`
 }
 
-// ProcessRule 定义“匹配进程，再从 /proc/<pid>/fd 发现日志文件”的规则。
+// ProcessRule 定义“通过 gopsutil 匹配进程，再从进程打开文件中发现日志”的规则。
 // CommRegex 与 CmdlineRegex 同时配置时采用 AND 关系。
 type ProcessRule struct {
 	Name         string            `yaml:"name"`
@@ -106,8 +107,10 @@ type ExportConfig struct {
 	Compression   string            `yaml:"compression"`
 	Timeout       Duration          `yaml:"timeout"`
 	BatchSize     int               `yaml:"batch_size"`
+	MaxBatchBytes int64             `yaml:"max_batch_bytes"`
 	FlushInterval Duration          `yaml:"flush_interval"`
 	QueueSize     int               `yaml:"queue_size"`
+	MaxQueueBytes int64             `yaml:"max_queue_bytes"`
 	Retry         RetryConfig       `yaml:"retry"`
 }
 
@@ -138,9 +141,10 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	cfg := defaults()
-	decErr := yaml.Unmarshal(b, &cfg)
-	if decErr != nil {
-		return Config{}, decErr
+	decoder := yaml.NewDecoder(bytes.NewReader(b))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
+		return Config{}, err
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -153,7 +157,7 @@ func defaults() Config {
 		Log: LogConfig{Level: "info", Format: "json", File: "./logs/log-collector.log", AlsoStdout: true, MaxSizeMB: 100, MaxBackups: 10, MaxAgeDays: 7, Compress: true}, State: StateConfig{Path: "./data/positions.json"},
 		Performance: PerformanceConfig{DiscoveryInterval: Duration{5 * time.Second}, ReadInterval: Duration{time.Second}, PositionFlushInterval: Duration{15 * time.Second}, WorkerCount: 4, MaxReadBytesPerFile: 4 * 1024 * 1024, MaxLogSize: 1024 * 1024, MaxMultilineSize: 4 * 1024 * 1024, MaxMultilineLines: 1000, CacheTTL: Duration{24 * time.Hour}},
 		FlowControl: FlowControlConfig{RatePerSecond: 1000, Burst: 2000, Mode: "block", ReportInterval: Duration{10 * time.Second}},
-		Export: ExportConfig{Timeout: Duration{10 * time.Second}, BatchSize: 500, FlushInterval: Duration{time.Second}, QueueSize: 10000,
+		Export: ExportConfig{Timeout: Duration{10 * time.Second}, BatchSize: 500, MaxBatchBytes: 4 * 1024 * 1024, FlushInterval: Duration{time.Second}, QueueSize: 10000, MaxQueueBytes: 64 * 1024 * 1024,
 			Retry: RetryConfig{Enabled: true, Initial: Duration{time.Second}, MaxInterval: Duration{30 * time.Second}, MaxElapsed: Duration{5 * time.Minute}}},
 	}
 }
@@ -187,6 +191,9 @@ func (c Config) Validate() error {
 	if c.Performance.WorkerCount <= 0 || c.Performance.MaxReadBytesPerFile <= 0 || c.Performance.MaxLogSize <= 0 || c.Performance.MaxMultilineSize <= 0 || c.Performance.MaxMultilineLines <= 0 || c.Performance.CacheTTL.Duration <= 0 {
 		return errors.New("performance limits must be positive")
 	}
+	if c.Performance.WorkerCount > 1024 {
+		return errors.New("performance.worker_count must not exceed 1024")
+	}
 	if c.FlowControl.Enabled {
 		if c.FlowControl.RatePerSecond <= 0 || c.FlowControl.Burst <= 0 || c.FlowControl.ReportInterval.Duration <= 0 {
 			return errors.New("flow_control rate, burst and report_interval must be positive")
@@ -195,8 +202,11 @@ func (c Config) Validate() error {
 			return errors.New("flow_control.mode must be block or drop")
 		}
 	}
-	if c.Export.BatchSize <= 0 || c.Export.QueueSize <= 0 {
-		return errors.New("export batch_size and queue_size must be positive")
+	if c.Export.BatchSize <= 0 || c.Export.QueueSize <= 0 || c.Export.MaxBatchBytes <= 0 || c.Export.MaxQueueBytes <= 0 {
+		return errors.New("export batch_size, max_batch_bytes, queue_size and max_queue_bytes must be positive")
+	}
+	if c.Export.MaxQueueBytes < c.Export.MaxBatchBytes {
+		return errors.New("export.max_queue_bytes must be greater than or equal to max_batch_bytes")
 	}
 	if c.Export.FlushInterval.Duration <= 0 || c.Export.Timeout.Duration <= 0 {
 		return errors.New("export flush_interval and timeout must be positive")

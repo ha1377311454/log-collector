@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -61,16 +62,19 @@ func New(cfg config.SourcesConfig, cacheTTL time.Duration, logger *logging.Logge
 func (d *Discovery) Discover(ctx context.Context) ([]model.FileTarget, error) {
 	var targets []model.FileTarget
 	var errs []error
-	processes, err := process.ProcessesWithContext(ctx)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("list processes: %w", err))
-	}
-	for _, p := range processes {
-		found, findErr := d.discoverProcess(ctx, p)
-		if findErr != nil {
-			errs = append(errs, findErr)
+	// 没有进程规则时完全跳过进程枚举，纯文件采集不承担额外系统调用开销。
+	if len(d.processRules) > 0 {
+		processes, err := process.ProcessesWithContext(ctx)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("list processes: %w", err))
 		}
-		targets = append(targets, found...)
+		for _, p := range processes {
+			found, findErr := d.discoverProcess(ctx, p)
+			if findErr != nil {
+				errs = append(errs, findErr)
+			}
+			targets = append(targets, found...)
+		}
 	}
 	for _, rule := range d.files {
 		targets = append(targets, discoverFiles(rule, "file")...)
@@ -86,10 +90,25 @@ func (d *Discovery) discoverProcess(ctx context.Context, p *process.Process) ([]
 	if err != nil {
 		return nil, nil
 	}
-	cmdline, _ := p.CmdlineWithContext(ctx)
-	matched := make([]compiledProcessRule, 0, len(d.processRules))
+	// 先用进程名排除不可能命中的规则，只有候选规则需要时才读取命令行。
+	nameMatched := make([]compiledProcessRule, 0, len(d.processRules))
+	needsCmdline := false
 	for _, rule := range d.processRules {
-		if (rule.comm == nil || rule.comm.MatchString(comm)) && (rule.cmdline == nil || rule.cmdline.MatchString(cmdline)) {
+		if rule.comm == nil || rule.comm.MatchString(comm) {
+			nameMatched = append(nameMatched, rule)
+			needsCmdline = needsCmdline || rule.cmdline != nil
+		}
+	}
+	if len(nameMatched) == 0 {
+		return nil, nil
+	}
+	var cmdline string
+	if needsCmdline {
+		cmdline, _ = p.CmdlineWithContext(ctx)
+	}
+	matched := make([]compiledProcessRule, 0, len(d.processRules))
+	for _, rule := range nameMatched {
+		if rule.cmdline == nil || rule.cmdline.MatchString(cmdline) {
 			matched = append(matched, rule)
 		}
 	}
@@ -136,6 +155,7 @@ func (d *Discovery) deduplicate(targets []model.FileTarget) []model.FileTarget {
 			continue
 		}
 		cycle[target.Path] = struct{}{}
+		prepareResource(&target)
 		unique = append(unique, target)
 		if _, ok := d.seen[target.Path]; !ok {
 			d.log.Info("discovered log file", "source", target.SourceType, "rule", target.Rule, "path", target.Path)
@@ -148,6 +168,30 @@ func (d *Discovery) deduplicate(targets []model.FileTarget) []model.FileTarget {
 		}
 	}
 	return unique
+}
+
+func prepareResource(target *model.FileTarget) {
+	resource := make(map[string]string, len(target.Attributes)+3)
+	for k, v := range target.Attributes {
+		resource[k] = v
+	}
+	resource["log.file.path"] = target.Path
+	resource["log.source.type"] = target.SourceType
+	resource["log.source.rule"] = target.Rule
+	target.ResourceAttributes = resource
+	keys := make([]string, 0, len(resource))
+	for key := range resource {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var key strings.Builder
+	for _, name := range keys {
+		key.WriteString(name)
+		key.WriteByte(0)
+		key.WriteString(resource[name])
+		key.WriteByte(0)
+	}
+	target.ResourceKey = key.String()
 }
 
 func discoverFiles(rule config.FileRule, sourceType string) []model.FileTarget {

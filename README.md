@@ -9,7 +9,7 @@
 - 采集 Kubernetes/CRI `/var/log/containers/*.log` 标准输出，识别 CRI 时间、stdout/stderr 和 P/F 标记。
 - 以 `device:inode` 保存读取位点，原子写入 position 文件；文件 truncate 后从头读取。
 - 支持“新记录起始行”或“上一条记录续行”两种多行模式。
-- 批量构造 OTLP Logs protobuf，通过 OTLP/HTTP 上报，支持 gzip、headers、超时和指数退避重试。
+- 批量构造 OTLP Logs protobuf，通过 OTLP/HTTP 上报，支持 gzip、headers、超时、字节级内存边界和指数退避重试。
 - 进程快照单次复用、固定读取 worker、dirty 位点刷盘、读取大小上限和 OTLP ResourceLogs 聚合。
 - 自身运行日志使用 zap，并通过 lumberjack 支持按大小滚动、历史数量、保留天数和 gzip 压缩。
 - 内置全局令牌桶流控，支持阻塞反压和超限丢弃两种模式。
@@ -118,6 +118,18 @@ Content-Encoding: gzip  # compression: gzip 时
 
 发送失败时当前批次会保留并指数退避重试；超过 `max_elapsed_time` 后进程返回错误，由进程管理器负责重启。
 
+批处理和内存队列同时按照“记录数”和“估算字节数”限制。建议生产环境显式配置：
+
+```yaml
+export:
+  batch_size: 500
+  max_batch_bytes: 4194304
+  queue_size: 10000
+  max_queue_bytes: 67108864
+```
+
+`max_queue_bytes` 必须大于或等于 `max_batch_bytes`。单条记录超过队列字节上限时会返回错误，不会无限占用内存。HTTP 408、429、5xx 和网络错误会重试；其他 4xx 配置类错误直接返回。
+
 ## 验证命令
 
 ```bash
@@ -140,6 +152,9 @@ make tidy             # 整理依赖
 make test             # 运行测试
 make vet              # 静态检查
 make build            # 构建当前平台二进制
+make build-linux      # 构建 Linux AMD64 和 ARM64
+make build-linux-amd64 # 仅构建 Linux AMD64
+make build-linux-arm64 # 仅构建 Linux ARM64
 make run              # 使用 config.yaml 启动
 make clean            # 删除 dist 目录
 ```

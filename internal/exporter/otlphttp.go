@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	collectorlogsv1 "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -30,7 +31,20 @@ type Exporter struct {
 	client *http.Client
 	log    *logging.Logger
 	input  chan model.Record
+
+	// channel 限制记录条数，这组字段额外限制排队记录的总字节数。
+	queueMu     sync.Mutex
+	queuedBytes int64
+	queueNotify chan struct{}
 }
+
+type httpStatusError struct {
+	status     int
+	retryAfter time.Duration
+	message    string
+}
+
+func (e *httpStatusError) Error() string { return e.message }
 
 // New 校验 endpoint；未指定路径时自动补充标准 OTLP/HTTP 路径 /v1/logs。
 func New(cfg config.ExportConfig, logger *logging.Logger) (*Exporter, error) {
@@ -42,15 +56,23 @@ func New(cfg config.ExportConfig, logger *logging.Logger) (*Exporter, error) {
 		u.Path = "/v1/logs"
 		cfg.Endpoint = u.String()
 	}
-	return &Exporter{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout.Duration}, log: logger, input: make(chan model.Record, cfg.QueueSize)}, nil
+	return &Exporter{cfg: cfg, client: &http.Client{Timeout: cfg.Timeout.Duration}, log: logger, input: make(chan model.Record, cfg.QueueSize), queueNotify: make(chan struct{})}, nil
 }
 
 // Enqueue 将日志写入有界内存队列；队列满时施加反压，而不是静默丢弃。
 func (e *Exporter) Enqueue(ctx context.Context, record model.Record) error {
+	size := recordSize(record)
+	if size > e.cfg.MaxQueueBytes {
+		return fmt.Errorf("log record estimated size %d exceeds export.max_queue_bytes %d", size, e.cfg.MaxQueueBytes)
+	}
+	if err := e.reserveQueueBytes(ctx, size); err != nil {
+		return err
+	}
 	select {
 	case e.input <- record:
 		return nil
 	case <-ctx.Done():
+		e.releaseQueueBytes(size)
 		return ctx.Err()
 	}
 }
@@ -61,45 +83,61 @@ func (e *Exporter) Run(ctx context.Context) error {
 	ticker := time.NewTicker(e.cfg.FlushInterval.Duration)
 	defer ticker.Stop()
 	batch := make([]model.Record, 0, e.cfg.BatchSize)
-	flush := func() error {
+	var batchBytes int64
+	flush := func(sendCtx context.Context) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := e.sendWithRetry(ctx, batch); err != nil {
+		if err := e.sendWithRetry(sendCtx, batch); err != nil {
 			return err
 		}
 		batch = batch[:0]
+		batchBytes = 0
+		return nil
+	}
+	appendRecord := func(sendCtx context.Context, record model.Record) error {
+		size := recordSize(record)
+		if len(batch) > 0 && (len(batch) >= e.cfg.BatchSize || batchBytes+size > e.cfg.MaxBatchBytes) {
+			if err := flush(sendCtx); err != nil {
+				return err
+			}
+		}
+		batch = append(batch, record)
+		batchBytes += size
 		return nil
 	}
 	for {
 		select {
 		case record := <-e.input:
-			batch = append(batch, record)
-			if len(batch) >= e.cfg.BatchSize {
-				if err := flush(); err != nil {
+			e.releaseQueueBytes(recordSize(record))
+			if err := appendRecord(ctx, record); err != nil {
+				return err
+			}
+			if len(batch) >= e.cfg.BatchSize || batchBytes >= e.cfg.MaxBatchBytes {
+				if err := flush(ctx); err != nil {
 					return err
 				}
 			}
 		case <-ticker.C:
-			if err := flush(); err != nil {
+			if err := flush(ctx); err != nil {
 				return err
 			}
 		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), e.cfg.Timeout.Duration)
+			defer cancel()
 			draining := true
 			for draining {
 				select {
 				case record := <-e.input:
-					batch = append(batch, record)
+					e.releaseQueueBytes(recordSize(record))
+					if err := appendRecord(shutdownCtx, record); err != nil {
+						return err
+					}
 				default:
 					draining = false
 				}
 			}
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), e.cfg.Timeout.Duration)
-			defer cancel()
-			if len(batch) > 0 {
-				return e.sendWithRetry(shutdownCtx, batch)
-			}
-			return nil
+			return flush(shutdownCtx)
 		}
 	}
 }
@@ -115,6 +153,14 @@ func (e *Exporter) sendWithRetry(ctx context.Context, records []model.Record) er
 		err := e.send(ctx, records)
 		if err == nil {
 			return nil
+		}
+		if statusErr, ok := err.(*httpStatusError); ok {
+			if statusErr.status != http.StatusRequestTimeout && statusErr.status != http.StatusTooManyRequests && statusErr.status < 500 {
+				return err
+			}
+			if statusErr.retryAfter > delay {
+				delay = statusErr.retryAfter
+			}
 		}
 		if !e.cfg.Retry.Enabled || (e.cfg.Retry.MaxElapsed.Duration > 0 && time.Since(start)+delay > e.cfg.Retry.MaxElapsed.Duration) {
 			return err
@@ -144,7 +190,10 @@ func (e *Exporter) send(ctx context.Context, records []model.Record) error {
 	groups := make(map[string]*group)
 	for _, r := range records {
 		lr := &logsv1.LogRecord{TimeUnixNano: uint64(r.Timestamp.UnixNano()), ObservedTimeUnixNano: uint64(r.ObservedTimestamp.UnixNano()), Body: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: r.Body}}, Attributes: keyValues(r.Attributes)}
-		key := attributeKey(r.ResourceAttributes)
+		key := r.ResourceKey
+		if key == "" {
+			key = attributeKey(r.ResourceAttributes)
+		}
 		g := groups[key]
 		if g == nil {
 			g = &group{attrs: r.ResourceAttributes}
@@ -193,11 +242,77 @@ func (e *Exporter) send(ctx context.Context, records []model.Record) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// 限制错误响应读取长度，避免异常网关返回大响应导致额外内存压力。
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("OTLP HTTP status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return &httpStatusError{status: resp.StatusCode, retryAfter: parseRetryAfter(resp.Header.Get("Retry-After")), message: fmt.Sprintf("OTLP HTTP status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))}
 	}
 	// 读取到 EOF 后再关闭，确保 Go HTTP Transport 可以复用连接。
-	_, _ = io.Copy(io.Discard, resp.Body)
+	responseData, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return err
+	}
+	if len(responseData) > 0 {
+		var response collectorlogsv1.ExportLogsServiceResponse
+		if err := proto.Unmarshal(responseData, &response); err != nil {
+			return fmt.Errorf("decode OTLP response: %w", err)
+		}
+		if partial := response.PartialSuccess; partial != nil && partial.RejectedLogRecords > 0 {
+			return fmt.Errorf("OTLP partial success rejected %d records: %s", partial.RejectedLogRecords, partial.ErrorMessage)
+		}
+	}
 	return nil
+}
+
+func (e *Exporter) reserveQueueBytes(ctx context.Context, size int64) error {
+	for {
+		e.queueMu.Lock()
+		if e.queuedBytes+size <= e.cfg.MaxQueueBytes {
+			e.queuedBytes += size
+			e.queueMu.Unlock()
+			return nil
+		}
+		notify := e.queueNotify
+		e.queueMu.Unlock()
+		select {
+		case <-notify:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func (e *Exporter) releaseQueueBytes(size int64) {
+	e.queueMu.Lock()
+	e.queuedBytes -= size
+	close(e.queueNotify)
+	e.queueNotify = make(chan struct{})
+	e.queueMu.Unlock()
+}
+
+// recordSize 是内存保护用的保守估算，包含正文、属性和值以及固定结构开销。
+func recordSize(record model.Record) int64 {
+	size := int64(len(record.Body) + 128)
+	for k, v := range record.Attributes {
+		size += int64(len(k) + len(v) + 32)
+	}
+	for k, v := range record.ResourceAttributes {
+		size += int64(len(k) + len(v) + 32)
+	}
+	return size
+}
+
+func parseRetryAfter(value string) time.Duration {
+	if value == "" {
+		return 0
+	}
+	if seconds, err := time.ParseDuration(value + "s"); err == nil {
+		return seconds
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		if delay := time.Until(when); delay > 0 {
+			return delay
+		}
+	}
+	return 0
 }
 
 func keyValues(values map[string]string) []*commonv1.KeyValue {

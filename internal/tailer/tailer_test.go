@@ -37,6 +37,21 @@ func TestReadBoundedLineDoesNotCommitPartialLine(t *testing.T) {
 	}
 }
 
+func TestReadBoundedLineTruncatesAtRuneBoundary(t *testing.T) {
+	r := bufio.NewReaderSize(strings.NewReader("你好世界\n"), 4)
+	line, consumed, complete, err := readBoundedLine(r, 2)
+	if err != nil || !complete || line != "你好" || consumed != int64(len("你好世界\n")) {
+		t.Fatalf("line=%q consumed=%d complete=%v err=%v", line, consumed, complete, err)
+	}
+}
+
+func TestTruncateRunesReplacesInvalidBytes(t *testing.T) {
+	value := string([]byte{'A', 0xff, 'B'})
+	if got := truncateRunes(value, 10); got != "A�B" {
+		t.Fatalf("truncateRunes() = %q", got)
+	}
+}
+
 func TestParseCRIRejectsPlainText(t *testing.T) {
 	if _, _, _, _, ok := parseCRI("plain text"); ok {
 		t.Fatal("plain text must not parse as CRI")

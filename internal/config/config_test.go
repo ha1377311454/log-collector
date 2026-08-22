@@ -31,3 +31,14 @@ func TestRejectsBothMultilineModes(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestLoadRejectsUnknownYAMLField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("export:\n  endpoint: http://127.0.0.1:4318\n  batch_szie: 100\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("unknown YAML field must be rejected")
+	}
+}

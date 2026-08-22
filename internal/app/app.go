@@ -126,6 +126,11 @@ func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
 	case err := <-exportErr:
 		stopLoops()
 		wg.Wait()
+		// Exporter 已经停止，不能再 flush 多行缓冲，否则会永久阻塞在无人消费的队列；
+		// 但仍应保存已经成功进入下游的文件位点，缩小异常退出后的重复采集窗口。
+		if saveErr := store.Save(); saveErr != nil && err == nil {
+			err = saveErr
+		}
 		if err == nil {
 			return errors.New("exporter stopped unexpectedly")
 		}

@@ -7,6 +7,7 @@ DIST_DIR := dist
 .DEFAULT_GOAL := help
 
 .PHONY: help fmt tidy test vet build clean run \
+	build-linux build-linux-amd64 build-linux-arm64 \
 	release-check release-snapshot release-local
 
 help: ## 显示可用命令
@@ -27,6 +28,16 @@ vet: ## 执行 Go 静态检查
 build: ## 构建当前系统和架构的二进制文件
 	mkdir -p $(DIST_DIR)
 	go build -trimpath -o $(DIST_DIR)/$(APP_NAME) $(MAIN_PACKAGE)
+
+build-linux: build-linux-amd64 build-linux-arm64 ## 构建全部支持的 Linux 架构
+
+build-linux-amd64: ## 构建 Linux AMD64 可执行文件
+	mkdir -p $(DIST_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o $(DIST_DIR)/$(APP_NAME)-linux-amd64 $(MAIN_PACKAGE)
+
+build-linux-arm64: ## 构建 Linux ARM64 可执行文件
+	mkdir -p $(DIST_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o $(DIST_DIR)/$(APP_NAME)-linux-arm64 $(MAIN_PACKAGE)
 
 run: ## 使用项目根目录的 config.yaml 启动采集器
 	go run $(MAIN_PACKAGE) -config ./config.yaml

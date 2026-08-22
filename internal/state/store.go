@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -69,11 +71,24 @@ func (s *Store) Cleanup(olderThan time.Time) {
 	defer s.mu.Unlock()
 	for key, position := range s.positions {
 		if position.UpdatedAt.Before(olderThan) {
+			// 文件仍存在且 inode 未变化时，它只是长时间没有新日志，不能删除位点。
+			// 否则重启后 start_at=beginning 会重复采集，start_at=end 会跳过停机期间内容。
+			if info, err := os.Stat(position.Path); err == nil && fileIdentity(info) == key {
+				continue
+			}
 			delete(s.positions, key)
 			s.dirty = true
 			s.generation++
 		}
 	}
+}
+
+func fileIdentity(info os.FileInfo) string {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	return strconv.FormatUint(uint64(stat.Dev), 10) + ":" + strconv.FormatUint(stat.Ino, 10)
 }
 
 // SaveIfDirty 只在位点变化后持久化，避免空闲时周期性 fsync。
@@ -88,7 +103,8 @@ func (s *Store) save(force bool) error {
 		s.mu.Unlock()
 		return nil
 	}
-	b, err := json.MarshalIndent(s.positions, "", "  ")
+	// 状态文件供程序恢复使用，无需缩进；紧凑 JSON 可明显降低大位点表的编码和刷盘量。
+	b, err := json.Marshal(s.positions)
 	generation := s.generation
 	s.mu.Unlock()
 	if err != nil {

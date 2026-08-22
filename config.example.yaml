@@ -29,8 +29,8 @@ performance:
   worker_count: 4
   # 单个文件每轮最多读取的字节数，防止高流量文件长期占用 worker。
   max_read_bytes_per_file: 4194304 # 4 MiB
-  # 单条日志最多保留的字节数；超出部分会被消费但不进入上报内容。
-  max_log_size: 1048576 # 1 MiB
+  # 单条日志最多保留的字符数（按 rune 计算）；超出部分会被消费但不进入上报内容。
+  max_log_size: 1048576
   # 一条多行日志允许的最大字节数和最大行数，达到任一限制即输出当前缓冲。
   max_multiline_size: 4194304 # 4 MiB
   max_multiline_lines: 1000
@@ -56,7 +56,7 @@ state:
   path: ./data/positions.json
 
 sources:
-  # 进程日志规则：先匹配 Linux 进程，再检查 /proc/<pid>/fd/* 指向的文件。
+  # 进程日志规则：先通过 gopsutil 匹配进程，再检查该进程打开的普通文件。
   processes:
     - name: java-applications # 规则唯一名称，会写入 log.source.rule 属性。
       # 匹配 /proc/<pid>/comm 中的短进程名。
@@ -133,10 +133,14 @@ export:
   timeout: 10s
   # 累积到该数量后立即发送；默认 500。
   batch_size: 500
+  # 单批日志的估算字节上限；与 batch_size 任一先达到都会触发发送。
+  max_batch_bytes: 4194304 # 4 MiB
   # 未达到 batch_size 时的最长等待时间；默认 1s。
   flush_interval: 1s
   # 内存队列容量。队列满后读取端会等待，从而对日志采集施加反压。
   queue_size: 10000
+  # 排队日志的估算总字节上限，防止少量超大日志绕过 queue_size 撑满内存。
+  max_queue_bytes: 67108864 # 64 MiB
   retry:
     # 开启后，一个失败批次会保留在内存中并进行指数退避重试。
     enabled: true

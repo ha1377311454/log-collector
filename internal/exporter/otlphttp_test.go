@@ -42,3 +42,39 @@ func TestSendOTLPProtobuf(t *testing.T) {
 		t.Fatalf("unexpected request: %v", &got)
 	}
 }
+
+func TestQueueByteLimitHonorsContextCancellation(t *testing.T) {
+	cfg := config.ExportConfig{Endpoint: "http://127.0.0.1:4318", Timeout: config.Duration{Duration: time.Second}, BatchSize: 1, MaxBatchBytes: 1024, QueueSize: 10, MaxQueueBytes: 256}
+	e, err := New(cfg, logging.Nop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := model.Record{Body: "first"}
+	if err := e.Enqueue(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := e.Enqueue(ctx, record); err == nil {
+		t.Fatal("second record must wait for queue bytes and honor context cancellation")
+	}
+}
+
+func TestPermanentHTTPErrorIsNotRetried(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(w, "bad token", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	cfg := config.ExportConfig{Endpoint: server.URL, Timeout: config.Duration{Duration: time.Second}, Retry: config.RetryConfig{Enabled: true, Initial: config.Duration{Duration: time.Millisecond}, MaxElapsed: config.Duration{Duration: time.Second}}}
+	e, err := New(cfg, logging.Nop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	err = e.sendWithRetry(context.Background(), []model.Record{{Body: "hello", Timestamp: now, ObservedTimestamp: now}})
+	if err == nil || requests != 1 {
+		t.Fatalf("err=%v requests=%d", err, requests)
+	}
+}

@@ -12,6 +12,9 @@ type FileTarget struct {
 	Format     string
 	Multiline  Multiline
 	Attributes map[string]string
+	// ResourceAttributes 和 ResourceKey 在发现阶段预计算，避免每条日志重复复制和排序。
+	ResourceAttributes map[string]string
+	ResourceKey        string
 }
 
 // Multiline 是已经转换成运行时 duration 的多行合并配置。
@@ -28,4 +31,5 @@ type Record struct {
 	ObservedTimestamp  time.Time
 	Attributes         map[string]string
 	ResourceAttributes map[string]string
+	ResourceKey        string
 }

@@ -1,0 +1,234 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"regexp"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config 是日志采集器的顶层配置，包含自身日志、位点、数据源和 OTLP 输出配置。
+type Config struct {
+	Log         LogConfig         `yaml:"log"`
+	State       StateConfig       `yaml:"state"`
+	Sources     SourcesConfig     `yaml:"sources"`
+	Export      ExportConfig      `yaml:"export"`
+	Performance PerformanceConfig `yaml:"performance"`
+}
+
+// LogConfig 控制采集器自身运行日志，不影响被采集的业务日志。
+type LogConfig struct {
+	Level      string `yaml:"level"`
+	Format     string `yaml:"format"`
+	File       string `yaml:"file"`
+	AlsoStdout bool   `yaml:"also_stdout"`
+	MaxSizeMB  int    `yaml:"max_size_mb"`
+	MaxBackups int    `yaml:"max_backups"`
+	MaxAgeDays int    `yaml:"max_age_days"`
+	Compress   bool   `yaml:"compress"`
+}
+
+// StateConfig 定义日志读取位点的持久化位置。
+type StateConfig struct {
+	Path string `yaml:"path"`
+}
+
+// PerformanceConfig 控制发现、读取、持久化频率以及单轮资源上限。
+type PerformanceConfig struct {
+	DiscoveryInterval     Duration `yaml:"discovery_interval"`
+	ReadInterval          Duration `yaml:"read_interval"`
+	PositionFlushInterval Duration `yaml:"position_flush_interval"`
+	WorkerCount           int      `yaml:"worker_count"`
+	MaxReadBytesPerFile   int64    `yaml:"max_read_bytes_per_file"`
+	MaxLogSize            int      `yaml:"max_log_size"`
+	MaxMultilineSize      int      `yaml:"max_multiline_size"`
+	MaxMultilineLines     int      `yaml:"max_multiline_lines"`
+	CacheTTL              Duration `yaml:"cache_ttl"`
+}
+
+// SourcesConfig 将日志源分为进程发现、自定义文件和容器标准输出三类。
+type SourcesConfig struct {
+	Processes  []ProcessRule `yaml:"processes"`
+	Files      []FileRule    `yaml:"files"`
+	Containers []FileRule    `yaml:"containers"`
+}
+
+// ProcessRule 定义“匹配进程，再从 /proc/<pid>/fd 发现日志文件”的规则。
+// CommRegex 与 CmdlineRegex 同时配置时采用 AND 关系。
+type ProcessRule struct {
+	Name         string            `yaml:"name"`
+	CommRegex    string            `yaml:"comm_regex"`
+	CmdlineRegex string            `yaml:"cmdline_regex"`
+	IncludeRegex string            `yaml:"include_regex"`
+	ExcludeRegex string            `yaml:"exclude_regex"`
+	MaxFiles     int               `yaml:"max_files"`
+	StartAt      string            `yaml:"start_at"`
+	Multiline    MultilineConfig   `yaml:"multiline"`
+	Attributes   map[string]string `yaml:"attributes"`
+}
+
+// FileRule 定义基于文件 glob 的日志源，同时用于普通文件和容器标准输出。
+type FileRule struct {
+	Name       string            `yaml:"name"`
+	Include    []string          `yaml:"include"`
+	Exclude    []string          `yaml:"exclude"`
+	StartAt    string            `yaml:"start_at"`
+	Format     string            `yaml:"format"`
+	Multiline  MultilineConfig   `yaml:"multiline"`
+	Attributes map[string]string `yaml:"attributes"`
+}
+
+// MultilineConfig 定义多行合并规则。
+// StartPattern 与 ContinuationPattern 互斥，只能选择一种语义。
+type MultilineConfig struct {
+	StartPattern        string   `yaml:"start_pattern"`
+	ContinuationPattern string   `yaml:"continuation_pattern"`
+	FlushAfter          Duration `yaml:"flush_after"`
+}
+
+// ExportConfig 定义 OTLP/HTTP 批量上报、内存队列及重试参数。
+type ExportConfig struct {
+	Endpoint      string            `yaml:"endpoint"`
+	Headers       map[string]string `yaml:"headers"`
+	Compression   string            `yaml:"compression"`
+	Timeout       Duration          `yaml:"timeout"`
+	BatchSize     int               `yaml:"batch_size"`
+	FlushInterval Duration          `yaml:"flush_interval"`
+	QueueSize     int               `yaml:"queue_size"`
+	Retry         RetryConfig       `yaml:"retry"`
+}
+
+// RetryConfig 定义指数退避策略；MaxElapsed 为 0 表示不限制总重试时间。
+type RetryConfig struct {
+	Enabled     bool     `yaml:"enabled"`
+	Initial     Duration `yaml:"initial_interval"`
+	MaxInterval Duration `yaml:"max_interval"`
+	MaxElapsed  Duration `yaml:"max_elapsed_time"`
+}
+
+// Duration 包装 time.Duration，使 YAML 可以直接使用 200ms、3s、5m 等写法。
+type Duration struct{ time.Duration }
+
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	v, err := time.ParseDuration(value.Value)
+	if err != nil {
+		return err
+	}
+	d.Duration = v
+	return nil
+}
+
+// Load 先装载默认值，再用 YAML 覆盖，最后统一校验配置。
+func Load(path string) (Config, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg := defaults()
+	decErr := yaml.Unmarshal(b, &cfg)
+	if decErr != nil {
+		return Config{}, decErr
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func defaults() Config {
+	return Config{
+		Log: LogConfig{Level: "info", Format: "json", File: "./logs/log-collector.log", AlsoStdout: true, MaxSizeMB: 100, MaxBackups: 10, MaxAgeDays: 7, Compress: true}, State: StateConfig{Path: "./data/positions.json"},
+		Performance: PerformanceConfig{DiscoveryInterval: Duration{5 * time.Second}, ReadInterval: Duration{time.Second}, PositionFlushInterval: Duration{15 * time.Second}, WorkerCount: 4, MaxReadBytesPerFile: 4 * 1024 * 1024, MaxLogSize: 1024 * 1024, MaxMultilineSize: 4 * 1024 * 1024, MaxMultilineLines: 1000, CacheTTL: Duration{24 * time.Hour}},
+		Export: ExportConfig{Timeout: Duration{10 * time.Second}, BatchSize: 500, FlushInterval: Duration{time.Second}, QueueSize: 10000,
+			Retry: RetryConfig{Enabled: true, Initial: Duration{time.Second}, MaxInterval: Duration{30 * time.Second}, MaxElapsed: Duration{5 * time.Minute}}},
+	}
+}
+
+// Validate 在程序启动前拒绝缺失字段、非法枚举和错误的正则表达式。
+func (c Config) Validate() error {
+	if c.Log.Level != "debug" && c.Log.Level != "info" && c.Log.Level != "warn" && c.Log.Level != "error" {
+		return errors.New("log.level must be debug, info, warn or error")
+	}
+	if c.Log.Format != "json" && c.Log.Format != "console" {
+		return errors.New("log.format must be json or console")
+	}
+	if c.Log.File == "" && !c.Log.AlsoStdout {
+		return errors.New("log.file and log.also_stdout cannot both be disabled")
+	}
+	if c.Log.MaxSizeMB <= 0 || c.Log.MaxBackups < 0 || c.Log.MaxAgeDays < 0 {
+		return errors.New("log rotation values are invalid")
+	}
+	if c.Export.Endpoint == "" {
+		return errors.New("export.endpoint is required")
+	}
+	if c.State.Path == "" {
+		return errors.New("state.path is required")
+	}
+	if c.Export.Compression != "" && c.Export.Compression != "gzip" {
+		return errors.New("export.compression must be empty or gzip")
+	}
+	if c.Performance.DiscoveryInterval.Duration <= 0 || c.Performance.ReadInterval.Duration <= 0 || c.Performance.PositionFlushInterval.Duration <= 0 {
+		return errors.New("performance intervals must be positive")
+	}
+	if c.Performance.WorkerCount <= 0 || c.Performance.MaxReadBytesPerFile <= 0 || c.Performance.MaxLogSize <= 0 || c.Performance.MaxMultilineSize <= 0 || c.Performance.MaxMultilineLines <= 0 || c.Performance.CacheTTL.Duration <= 0 {
+		return errors.New("performance limits must be positive")
+	}
+	if c.Export.BatchSize <= 0 || c.Export.QueueSize <= 0 {
+		return errors.New("export batch_size and queue_size must be positive")
+	}
+	if c.Export.FlushInterval.Duration <= 0 || c.Export.Timeout.Duration <= 0 {
+		return errors.New("export flush_interval and timeout must be positive")
+	}
+	for _, r := range c.Sources.Processes {
+		if r.Name == "" || (r.CommRegex == "" && r.CmdlineRegex == "") || r.IncludeRegex == "" {
+			return fmt.Errorf("invalid process rule %q", r.Name)
+		}
+		if err := validateStartAt(r.StartAt); err != nil {
+			return fmt.Errorf("process rule %q: %w", r.Name, err)
+		}
+		if r.Multiline.StartPattern != "" && r.Multiline.ContinuationPattern != "" {
+			return fmt.Errorf("process rule %q: multiline patterns are mutually exclusive", r.Name)
+		}
+		for field, expression := range map[string]string{"comm_regex": r.CommRegex, "cmdline_regex": r.CmdlineRegex, "include_regex": r.IncludeRegex, "exclude_regex": r.ExcludeRegex, "start_pattern": r.Multiline.StartPattern, "continuation_pattern": r.Multiline.ContinuationPattern} {
+			if expression != "" {
+				if _, err := regexp.Compile(expression); err != nil {
+					return fmt.Errorf("process rule %q: invalid %s: %w", r.Name, field, err)
+				}
+			}
+		}
+	}
+	for _, group := range [][]FileRule{c.Sources.Files, c.Sources.Containers} {
+		for _, r := range group {
+			if r.Name == "" || len(r.Include) == 0 {
+				return fmt.Errorf("file rule name and include are required")
+			}
+			if err := validateStartAt(r.StartAt); err != nil {
+				return fmt.Errorf("file rule %q: %w", r.Name, err)
+			}
+			if r.Format != "" && r.Format != "cri" {
+				return fmt.Errorf("file rule %q: format must be empty or cri", r.Name)
+			}
+			if r.Multiline.StartPattern != "" && r.Multiline.ContinuationPattern != "" {
+				return fmt.Errorf("file rule %q: multiline patterns are mutually exclusive", r.Name)
+			}
+			for field, expression := range map[string]string{"start_pattern": r.Multiline.StartPattern, "continuation_pattern": r.Multiline.ContinuationPattern} {
+				if expression != "" {
+					if _, err := regexp.Compile(expression); err != nil {
+						return fmt.Errorf("file rule %q: invalid %s: %w", r.Name, field, err)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateStartAt(v string) error {
+	if v != "" && v != "beginning" && v != "end" {
+		return fmt.Errorf("start_at must be beginning or end")
+	}
+	return nil
+}

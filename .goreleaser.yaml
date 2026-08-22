@@ -1,0 +1,61 @@
+version: 2
+
+project_name: log-collector
+
+# 构建前只校验依赖完整性，不自动修改 go.mod 或 go.sum。
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - id: log-collector
+    main: ./cmd/log-collector
+    binary: log-collector
+
+    # 当前程序依赖 Linux 进程信息和文件 inode，只发布 Linux 制品。
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+    env:
+      - CGO_ENABLED=0
+
+    flags:
+      - -trimpath
+
+    # 删除调试符号和 DWARF 信息，减小发布二进制体积。
+    ldflags:
+      - -s
+      - -w
+
+archives:
+  - ids:
+      - log-collector
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    files:
+      - README.md
+      - config.example.yaml
+
+# 为全部发布制品生成 SHA-256 校验文件。
+checksum:
+  name_template: checksums.txt
+
+# 快照版本不会发布，只用于本地或 CI 验证打包结果。
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'

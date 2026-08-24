@@ -298,7 +298,7 @@ func startAt(v string) string {
 	return v
 }
 func multiline(v config.MultilineConfig) model.Multiline {
-	return model.Multiline{StartPattern: v.StartPattern, ContinuationPattern: v.ContinuationPattern, FlushAfter: v.FlushAfter.Duration}
+	return model.Multiline{StartPattern: v.StartPattern, FlushAfter: v.FlushAfter.Duration}
 }
 func clone(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))

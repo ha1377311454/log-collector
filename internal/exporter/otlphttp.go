@@ -182,28 +182,7 @@ func (e *Exporter) sendWithRetry(ctx context.Context, records []model.Record) er
 }
 
 func (e *Exporter) send(ctx context.Context, records []model.Record) error {
-	reqData := &collectorlogsv1.ExportLogsServiceRequest{}
-	type group struct {
-		attrs   map[string]string
-		records []*logsv1.LogRecord
-	}
-	groups := make(map[string]*group)
-	for _, r := range records {
-		lr := &logsv1.LogRecord{TimeUnixNano: uint64(r.Timestamp.UnixNano()), ObservedTimeUnixNano: uint64(r.ObservedTimestamp.UnixNano()), SeverityText: r.SeverityText, SeverityNumber: logsv1.SeverityNumber(r.SeverityNumber), Body: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: r.Body}}, Attributes: keyValues(r.Attributes)}
-		key := r.ResourceKey
-		if key == "" {
-			key = attributeKey(r.ResourceAttributes)
-		}
-		g := groups[key]
-		if g == nil {
-			g = &group{attrs: r.ResourceAttributes}
-			groups[key] = g
-		}
-		g.records = append(g.records, lr)
-	}
-	for _, g := range groups {
-		reqData.ResourceLogs = append(reqData.ResourceLogs, &logsv1.ResourceLogs{Resource: &resourcev1.Resource{Attributes: keyValues(g.attrs)}, ScopeLogs: []*logsv1.ScopeLogs{{Scope: &commonv1.InstrumentationScope{Name: "log-collector"}, LogRecords: g.records}}})
-	}
+	reqData := BuildRequest(records)
 	b, err := proto.Marshal(reqData)
 	if err != nil {
 		return err
@@ -260,6 +239,33 @@ func (e *Exporter) send(ctx context.Context, records []model.Record) error {
 		}
 	}
 	return nil
+}
+
+// BuildRequest 将内部日志记录转换成 Exporter 实际发送的 OTLP Logs 请求。
+func BuildRequest(records []model.Record) *collectorlogsv1.ExportLogsServiceRequest {
+	reqData := &collectorlogsv1.ExportLogsServiceRequest{}
+	type group struct {
+		attrs   map[string]string
+		records []*logsv1.LogRecord
+	}
+	groups := make(map[string]*group)
+	for _, r := range records {
+		lr := &logsv1.LogRecord{TimeUnixNano: uint64(r.Timestamp.UnixNano()), ObservedTimeUnixNano: uint64(r.ObservedTimestamp.UnixNano()), SeverityText: r.SeverityText, SeverityNumber: logsv1.SeverityNumber(r.SeverityNumber), Body: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: r.Body}}, Attributes: keyValues(r.Attributes)}
+		key := r.ResourceKey
+		if key == "" {
+			key = attributeKey(r.ResourceAttributes)
+		}
+		g := groups[key]
+		if g == nil {
+			g = &group{attrs: r.ResourceAttributes}
+			groups[key] = g
+		}
+		g.records = append(g.records, lr)
+	}
+	for _, g := range groups {
+		reqData.ResourceLogs = append(reqData.ResourceLogs, &logsv1.ResourceLogs{Resource: &resourcev1.Resource{Attributes: keyValues(g.attrs)}, ScopeLogs: []*logsv1.ScopeLogs{{Scope: &commonv1.InstrumentationScope{Name: "log-collector"}, LogRecords: g.records}}})
+	}
+	return reqData
 }
 
 func (e *Exporter) reserveQueueBytes(ctx context.Context, size int64) error {

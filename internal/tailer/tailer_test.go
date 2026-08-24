@@ -3,11 +3,14 @@ package tailer
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+	"log-collector/internal/exporter"
 	"log-collector/internal/model"
 )
 
@@ -128,4 +131,107 @@ func TestConfiguredSeverityIsDroppedBeforeEmit(t *testing.T) {
 	if called {
 		t.Fatal("dropped record must not reach downstream emitter")
 	}
+}
+
+func TestJavaErrorStackTraceMergesLinesWithoutTimestamp(t *testing.T) {
+	const startPattern = `^(?:(?:\d{4}[-/]\d{2}[-/]\d{2})[ T])?\d{2}:\d{2}:\d{2}(?:[.,]\d{3,9})?(?:Z|[+-]\d{2}:?\d{2})?`
+	continuations := []string{
+		"com.example.application.QueryException: query expression is invalid",
+		"\tat com.example.application.QueryService.execute(QueryService.java:72)",
+		"\tat java.lang.Thread.run(Thread.java:830)",
+	}
+	tests := []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{name: "time with milliseconds", first: "11:13:10.692", second: "11:13:23.469"},
+		{name: "date time with milliseconds", first: "2026-08-24 11:13:10.692", second: "2026-08-24 11:13:23.469"},
+		{name: "ISO time with nanoseconds and UTC", first: "2026-08-24T11:13:10.692123456Z", second: "2026-08-24T11:13:23.469123456Z"},
+		{name: "slash date with comma milliseconds", first: "2026/08/24 11:13:10,692", second: "2026/08/24 11:13:23,469"},
+		{name: "date time without fraction", first: "2026-08-24 11:13:10", second: "2026-08-24 11:13:23"},
+		{name: "time with timezone offset", first: "2026-08-24 11:13:10.692+08:00", second: "2026-08-24 11:13:23.469+08:00"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			firstLine := tt.first + " - c.e.a.QueryService T:[worker-1] ERROR - request-a - query failed"
+			secondLine := tt.second + " - c.e.a.QueryService T:[worker-2] ERROR - request-b - query failed"
+			var emitted []model.Record
+			tailer := &Tailer{
+				emit: func(_ context.Context, record model.Record) error {
+					emitted = append(emitted, record)
+					return nil
+				},
+				maxMultilineSize: 1024 * 1024,
+				maxLines:         100,
+				pending:          make(map[string]*pending),
+			}
+			target := model.FileTarget{
+				Path:       "/tmp/query.log",
+				SourceType: "file",
+				Rule:       "java-query",
+				Multiline:  model.Multiline{StartPattern: startPattern},
+				Extractors: []model.AttributeExtractor{{
+					Key:     "request.id",
+					Pattern: regexp.MustCompile(`\b(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s+-\s+(\S+)\s+-`),
+				}},
+			}
+			ctx := context.Background()
+			if err := tailer.accept(ctx, "file-id", target, firstLine); err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range continuations {
+				if err := tailer.accept(ctx, "file-id", target, line); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tailer.accept(ctx, "file-id", target, secondLine); err != nil {
+				t.Fatal(err)
+			}
+
+			if len(emitted) != 1 {
+				t.Fatalf("emitted records = %d, want 1", len(emitted))
+			}
+			wantBody := strings.Join(append([]string{firstLine}, continuations...), "\n")
+			if emitted[0].Body != wantBody {
+				t.Fatalf("merged body mismatch\ngot:  %q\nwant: %q", emitted[0].Body, wantBody)
+			}
+			if strings.Contains(emitted[0].Body, secondLine) {
+				t.Fatal("second log entry must not be merged into the first record")
+			}
+			originalLines := append([]string{firstLine}, continuations...)
+			originalLines = append(originalLines, secondLine)
+			mergedLines := strings.Split(emitted[0].Body, "\n")
+			t.Logf(
+				"before merge (%d source lines):\n%s\nafter merge (record 1 uses source lines 1-%d; source line %d starts the next record):\n%s",
+				len(originalLines),
+				formatNumberedLines("source", originalLines),
+				len(mergedLines),
+				len(mergedLines)+1,
+				formatNumberedLines("record 1", mergedLines),
+			)
+
+			protocolRecord := emitted[0]
+			protocolTime := time.Date(2026, 8, 24, 3, 13, 10, 692000000, time.UTC)
+			protocolRecord.Timestamp = protocolTime
+			protocolRecord.ObservedTimestamp = protocolTime
+			otlpJSON, err := (protojson.MarshalOptions{Multiline: true, Indent: "  "}).Marshal(exporter.BuildRequest([]model.Record{protocolRecord}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("final OpenTelemetry ExportLogsServiceRequest:\n%s", otlpJSON)
+		})
+	}
+}
+
+func formatNumberedLines(label string, lines []string) string {
+	var output strings.Builder
+	for index, line := range lines {
+		if index > 0 {
+			output.WriteByte('\n')
+		}
+		_, _ = fmt.Fprintf(&output, "[%s line %d] %s", label, index+1, line)
+	}
+	return output.String()
 }

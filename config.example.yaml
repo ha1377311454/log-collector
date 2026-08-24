@@ -72,9 +72,8 @@ sources:
       # 没有历史位点的新文件从哪里开始：beginning 或 end；默认 end。
       start_at: end
       multiline:
-        # 匹配表示当前行属于上一条 Java 日志。
-        # continuation_pattern 与 start_pattern 只能配置一个。
-        continuation_pattern: '^[^(\d{4}\-\d{2}\-\d{2}\s\d{2}:\d{2}:\d{2})]|^(\s+|\})'
+        # 时间开头的行开始一条新日志，其他行合并到上一条。
+        start_pattern: '^(?:(?:\d{4}[-/]\d{2}[-/]\d{2})[ T])?\d{2}:\d{2}:\d{2}(?:[.,]\d{3,9})?(?:Z|[+-]\d{2}:?\d{2})?'
         # 最后一条多行日志长时间没有新行时，等待多久后强制输出；默认 5s。
         flush_after: 3s
       # 从完整日志正文抽取 OTLP LogRecord 属性；第一个捕获组作为属性值。
@@ -108,8 +107,8 @@ sources:
       # 首次发现时读取已有历史内容；恢复时仍以 position 文件为准。
       start_at: beginning
       multiline:
-        # 匹配表示当前行属于上一条 Java 日志。
-        continuation_pattern: '^[^(\d{4}\-\d{2}\-\d{2}\s\d{2}:\d{2}:\d{2})]|^(\s+|\})'
+        # 时间开头的行开始一条新日志，其他行合并到上一条。
+        start_pattern: '^(?:(?:\d{4}[-/]\d{2}[-/]\d{2})[ T])?\d{2}:\d{2}:\d{2}(?:[.,]\d{3,9})?(?:Z|[+-]\d{2}:?\d{2})?'
         flush_after: 3s
       attribute_extractors:
         - key: request.id

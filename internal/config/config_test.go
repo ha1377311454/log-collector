@@ -23,10 +23,10 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	}
 }
 
-func TestRejectsBothMultilineModes(t *testing.T) {
+func TestRejectsInvalidMultilineStartPattern(t *testing.T) {
 	cfg := defaults()
 	cfg.Export.Endpoint = "http://localhost:4318"
-	cfg.Sources.Files = []FileRule{{Name: "x", Include: []string{"*.log"}, Multiline: MultilineConfig{StartPattern: "x", ContinuationPattern: "y"}}}
+	cfg.Sources.Files = []FileRule{{Name: "x", Include: []string{"*.log"}, Multiline: MultilineConfig{StartPattern: "["}}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected validation error")
 	}

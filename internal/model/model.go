@@ -30,9 +30,8 @@ type AttributeExtractor struct {
 
 // Multiline 是已经转换成运行时 duration 的多行合并配置。
 type Multiline struct {
-	StartPattern        string
-	ContinuationPattern string
-	FlushAfter          time.Duration
+	StartPattern string
+	FlushAfter   time.Duration
 }
 
 // Record 是 Tailer 与 OTLP Exporter 之间的内部日志模型。

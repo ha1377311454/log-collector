@@ -103,12 +103,10 @@ type AttributeExtractorConfig struct {
 	Pattern string `yaml:"pattern"`
 }
 
-// MultilineConfig 定义多行合并规则。
-// StartPattern 与 ContinuationPattern 互斥，只能选择一种语义。
+// MultilineConfig 定义多行合并规则；匹配 StartPattern 的行开始一条新日志，其他行续接上一条。
 type MultilineConfig struct {
-	StartPattern        string   `yaml:"start_pattern"`
-	ContinuationPattern string   `yaml:"continuation_pattern"`
-	FlushAfter          Duration `yaml:"flush_after"`
+	StartPattern string   `yaml:"start_pattern"`
+	FlushAfter   Duration `yaml:"flush_after"`
 }
 
 // ExportConfig 定义 OTLP/HTTP 批量上报、内存队列及重试参数。
@@ -229,10 +227,7 @@ func (c Config) Validate() error {
 		if err := validateStartAt(r.StartAt); err != nil {
 			return fmt.Errorf("process rule %q: %w", r.Name, err)
 		}
-		if r.Multiline.StartPattern != "" && r.Multiline.ContinuationPattern != "" {
-			return fmt.Errorf("process rule %q: multiline patterns are mutually exclusive", r.Name)
-		}
-		for field, expression := range map[string]string{"comm_regex": r.CommRegex, "cmdline_regex": r.CmdlineRegex, "include_regex": r.IncludeRegex, "exclude_regex": r.ExcludeRegex, "start_pattern": r.Multiline.StartPattern, "continuation_pattern": r.Multiline.ContinuationPattern} {
+		for field, expression := range map[string]string{"comm_regex": r.CommRegex, "cmdline_regex": r.CmdlineRegex, "include_regex": r.IncludeRegex, "exclude_regex": r.ExcludeRegex, "start_pattern": r.Multiline.StartPattern} {
 			if expression != "" {
 				if _, err := regexp.Compile(expression); err != nil {
 					return fmt.Errorf("process rule %q: invalid %s: %w", r.Name, field, err)
@@ -257,10 +252,7 @@ func (c Config) Validate() error {
 			if r.Format != "" && r.Format != "cri" {
 				return fmt.Errorf("file rule %q: format must be empty or cri", r.Name)
 			}
-			if r.Multiline.StartPattern != "" && r.Multiline.ContinuationPattern != "" {
-				return fmt.Errorf("file rule %q: multiline patterns are mutually exclusive", r.Name)
-			}
-			for field, expression := range map[string]string{"start_pattern": r.Multiline.StartPattern, "continuation_pattern": r.Multiline.ContinuationPattern} {
+			for field, expression := range map[string]string{"start_pattern": r.Multiline.StartPattern} {
 				if expression != "" {
 					if _, err := regexp.Compile(expression); err != nil {
 						return fmt.Errorf("file rule %q: invalid %s: %w", r.Name, field, err)

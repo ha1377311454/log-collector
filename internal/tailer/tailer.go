@@ -44,13 +44,13 @@ type readJob struct {
 }
 
 type pending struct {
-	body                strings.Builder
-	size, lines         int
-	target              model.FileTarget
-	timestamp           time.Time
-	attributes          map[string]string
-	updated             time.Time
-	start, continuation *regexp.Regexp
+	body        strings.Builder
+	size, lines int
+	target      model.FileTarget
+	timestamp   time.Time
+	attributes  map[string]string
+	updated     time.Time
+	start       *regexp.Regexp
 }
 
 var severityPattern = regexp.MustCompile(`(?i)(?:^|[\s\[\]():=\-])(TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRITICAL|CRIT|ALERT|EMERG|PANIC)(?:$|[\s\[\]():=\-])`)
@@ -214,7 +214,7 @@ func (t *Tailer) accept(ctx context.Context, key string, target model.FileTarget
 			line, timestamp, attrs = body, ts, map[string]string{"log.iostream": stream, "log.cri.flag": flag}
 		}
 	}
-	if target.Multiline.StartPattern == "" && target.Multiline.ContinuationPattern == "" {
+	if target.Multiline.StartPattern == "" {
 		return t.emitRecord(ctx, target, line, timestamp, attrs)
 	}
 	if len(line) > t.maxMultilineSize {
@@ -225,10 +225,9 @@ func (t *Tailer) accept(ctx context.Context, key string, target model.FileTarget
 	if p == nil {
 		p = &pending{target: target, updated: time.Now()}
 		p.start, _ = regexp.Compile(target.Multiline.StartPattern)
-		p.continuation, _ = regexp.Compile(target.Multiline.ContinuationPattern)
 		t.pending[key] = p
 	}
-	boundary := (p.start != nil && p.start.MatchString(line)) || (p.continuation != nil && !p.continuation.MatchString(line))
+	boundary := p.start.MatchString(line)
 	overLimit := p.body.Len() > 0 && (p.size+len(line)+1 > t.maxMultilineSize || p.lines >= t.maxLines)
 	if (boundary || overLimit) && p.body.Len() > 0 {
 		// 发送可能因限流或满队列阻塞，必须在全局 pending 锁之外执行。

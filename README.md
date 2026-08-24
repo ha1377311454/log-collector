@@ -177,11 +177,21 @@ wechat_webhook:
   enabled: true
   url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=replace-me'
   title: 日志异常告警
+  ignore_keywords:
+    - known harmless error
+    - connection reset by peer
+  error_type_keywords:
+    - AuthenticationException
+    - DatabaseException
   timeout: 5s
   max_content_length: 4000
 ```
 
-只有解析为 `ERROR` 或 `FATAL` 的日志会推送。消息使用 Markdown 告警样式，包含主机、时间、日志级别、来源规则、文件路径、可选的 `request.id` 和多行合并后的正文。正文按原始换行逐行输出，不插入 `<br>`，并转义反引号以避免 SQL 字段被渲染成行内代码。主机优先读取 `host.name` Resource 属性，否则使用采集器所在主机名。Webhook 地址包含机器人密钥，不会被程序写入错误日志；生产环境应通过部署系统注入并限制配置文件权限。
+只有解析为 `ERROR` 或 `FATAL` 的日志会推送。若合并后的完整正文包含 `ignore_keywords` 中任一关键词，则跳过推送；匹配使用 `strings.Contains`，区分大小写，空值和重复值会被配置校验拒绝。将采集器自身的 `log.level` 设置为 `debug` 后，会输出被忽略日志的命中关键词、级别、来源、文件、请求 ID 和完整正文。
+
+`error_type_keywords` 用于给通知分类，不会过滤通知。正文命中列表中的关键词时，按配置顺序取第一个匹配项，在企业微信通知中增加“错误类型”字段；没有命中时不显示该字段。匹配同样区分大小写。
+
+消息使用 Markdown 告警样式，包含主机、时间、日志级别、来源规则、文件路径、可选的 `request.id` 和多行合并后的正文。正文按原始换行逐行输出，不插入 `<br>`，并转义反引号以避免 SQL 字段被渲染成行内代码。主机优先读取 `host.name` Resource 属性，否则使用采集器所在主机名。Webhook 地址包含机器人密钥，不会被程序写入错误日志；生产环境应通过部署系统注入并限制配置文件权限。
 
 OTLP 和企业微信可以同时开启，也可以只开启其中一个；两者同时关闭会导致启动配置校验失败。两者同时开启时，Webhook 暂时失败不会阻断 OTLP 输出；仅启用 Webhook 时，推送失败会返回错误，避免日志在没有任何成功输出的情况下继续推进位点。
 

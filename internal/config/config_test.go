@@ -78,3 +78,25 @@ func TestRejectsAllOutputsDisabled(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestRejectsEmptyWebhookIgnoreKeyword(t *testing.T) {
+	cfg := defaults()
+	cfg.Export.Endpoint = "http://localhost:4318"
+	cfg.Webhook.Enabled = true
+	cfg.Webhook.URL = "https://example.com/webhook"
+	cfg.Webhook.IgnoreKeywords = []string{" "}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestRejectsEmptyWebhookErrorTypeKeyword(t *testing.T) {
+	cfg := defaults()
+	cfg.Export.Endpoint = "http://localhost:4318"
+	cfg.Webhook.Enabled = true
+	cfg.Webhook.URL = "https://example.com/webhook"
+	cfg.Webhook.ErrorTypeKeywords = []string{""}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}

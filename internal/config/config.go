@@ -127,11 +127,13 @@ type ExportConfig struct {
 
 // WebhookConfig 定义企业微信群机器人错误日志推送配置。
 type WebhookConfig struct {
-	Enabled          bool     `yaml:"enabled"`
-	URL              string   `yaml:"url"`
-	Title            string   `yaml:"title"`
-	Timeout          Duration `yaml:"timeout"`
-	MaxContentLength int      `yaml:"max_content_length"`
+	Enabled           bool     `yaml:"enabled"`
+	URL               string   `yaml:"url"`
+	Title             string   `yaml:"title"`
+	IgnoreKeywords    []string `yaml:"ignore_keywords"`
+	ErrorTypeKeywords []string `yaml:"error_type_keywords"`
+	Timeout           Duration `yaml:"timeout"`
+	MaxContentLength  int      `yaml:"max_content_length"`
 }
 
 // RetryConfig 定义指数退避策略；MaxElapsed 为 0 表示不限制总重试时间。
@@ -227,6 +229,12 @@ func (c Config) Validate() error {
 		if c.Webhook.Timeout.Duration <= 0 || c.Webhook.MaxContentLength <= 0 {
 			return errors.New("wechat_webhook timeout and max_content_length must be positive")
 		}
+		if err := validateKeywordList("wechat_webhook.ignore_keywords", c.Webhook.IgnoreKeywords); err != nil {
+			return err
+		}
+		if err := validateKeywordList("wechat_webhook.error_type_keywords", c.Webhook.ErrorTypeKeywords); err != nil {
+			return err
+		}
 	}
 	if c.Performance.DiscoveryInterval.Duration <= 0 || c.Performance.ReadInterval.Duration <= 0 || c.Performance.PositionFlushInterval.Duration <= 0 {
 		return errors.New("performance intervals must be positive")
@@ -291,6 +299,20 @@ func (c Config) Validate() error {
 				return fmt.Errorf("file rule %q: %w", r.Name, err)
 			}
 		}
+	}
+	return nil
+}
+
+func validateKeywordList(field string, keywords []string) error {
+	seen := make(map[string]struct{}, len(keywords))
+	for _, keyword := range keywords {
+		if strings.TrimSpace(keyword) == "" {
+			return fmt.Errorf("%s must not contain empty values", field)
+		}
+		if _, exists := seen[keyword]; exists {
+			return fmt.Errorf("duplicate %s value %q", field, keyword)
+		}
+		seen[keyword] = struct{}{}
 	}
 	return nil
 }

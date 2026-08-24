@@ -168,6 +168,14 @@ wechat_webhook:
   enabled: false
   # Markdown 消息顶部标题。
   title: 日志异常告警
+  # 日志正文命中任一关键词时不推送；使用 YAML 多行列表，匹配区分大小写。
+  ignore_keywords:
+    - known harmless error
+    - connection reset by peer
+  # 正文命中后，按配置顺序取第一个匹配词作为通知中的错误类型。
+  error_type_keywords:
+    - AuthenticationException
+    - DatabaseException
   # Webhook 地址包含机器人密钥，请通过部署系统注入并限制配置文件权限。
   url: ''
   timeout: 5s

@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"log-collector/internal/config"
+	"log-collector/internal/logging"
 	"log-collector/internal/model"
 )
 
@@ -29,7 +32,7 @@ func TestSendErrorLogAsWeChatMarkdownMessage(t *testing.T) {
 		if message.MsgType != "markdown" || message.Markdown.Content == "" {
 			t.Fatalf("unexpected message: %+v", message)
 		}
-		for _, expected := range []string{"### 🚨 API 日志告警", "**主机：** app-host", "**日志级别：**", "**日志来源：** application", "**日志文件：** /var/log/application.log", "**请求 ID：**", "request-a", "**日志内容**", "query failed", "\\`metric.name\\`", "\n> <font color=\"warning\">\tat com.example.QueryService.execute"} {
+		for _, expected := range []string{"### 🚨 API 日志告警", "**主机：** app-host", "**日志级别：**", "**错误类型：** <font color=\"warning\">DatabaseException</font>", "**日志来源：** application", "**日志文件：** /var/log/application.log", "**请求 ID：**", "request-a", "**日志内容**", "query failed", "\\`metric.name\\`", "\n> <font color=\"warning\">\tat com.example.QueryService.execute"} {
 			if !strings.Contains(message.Markdown.Content, expected) {
 				t.Errorf("message content does not contain %q: %s", expected, message.Markdown.Content)
 			}
@@ -42,12 +45,12 @@ func TestSendErrorLogAsWeChatMarkdownMessage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(config.WebhookConfig{URL: server.URL, Title: "API 日志告警", Timeout: config.Duration{Duration: time.Second}, MaxContentLength: 4000})
+	client, err := New(config.WebhookConfig{URL: server.URL, Title: "API 日志告警", ErrorTypeKeywords: []string{"DatabaseException"}, Timeout: config.Duration{Duration: time.Second}, MaxContentLength: 4000}, logging.Nop())
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := model.Record{
-		Body:               "ERROR - request-a - query failed: SELECT `metric.name` WHERE value < 1\n\tat com.example.QueryService.execute(QueryService.java:72)",
+		Body:               "ERROR - request-a - DatabaseException: query failed: SELECT `metric.name` WHERE value < 1\n\tat com.example.QueryService.execute(QueryService.java:72)",
 		SeverityText:       "ERROR",
 		Attributes:         map[string]string{"request.id": "request-a"},
 		ResourceAttributes: map[string]string{"host.name": "app-host", "log.source.rule": "application", "log.file.path": "/var/log/application.log"},
@@ -64,7 +67,7 @@ func TestSendIgnoresNonErrorLog(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
 	defer server.Close()
-	client, err := New(config.WebhookConfig{URL: server.URL, Timeout: config.Duration{Duration: time.Second}, MaxContentLength: 4000})
+	client, err := New(config.WebhookConfig{URL: server.URL, Timeout: config.Duration{Duration: time.Second}, MaxContentLength: 4000}, logging.Nop())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,5 +76,44 @@ func TestSendIgnoresNonErrorLog(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("requests = %d, want 0", requests)
+	}
+}
+
+func TestSendIgnoresBodyContainingConfiguredKeyword(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+	logPath := filepath.Join(t.TempDir(), "collector.log")
+	logger, err := logging.New(config.LogConfig{Level: "debug", Format: "json", File: logPath, MaxSizeMB: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := New(config.WebhookConfig{
+		URL:              server.URL,
+		Timeout:          config.Duration{Duration: time.Second},
+		MaxContentLength: 4000,
+		IgnoreKeywords:   []string{"known harmless error"},
+	}, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := model.Record{SeverityText: "ERROR", Body: "request failed: known harmless error"}
+	if err := client.Send(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want 0", requests)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatal(err)
+	}
+	debugLog, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"WeChat webhook ignored log by keyword", "known harmless error", "request failed: known harmless error"} {
+		if !strings.Contains(string(debugLog), expected) {
+			t.Errorf("debug log does not contain %q: %s", expected, debugLog)
+		}
 	}
 }

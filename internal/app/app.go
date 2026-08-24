@@ -48,7 +48,7 @@ func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
 	}
 	var hook *webhook.Client
 	if cfg.Webhook.Enabled {
-		hook, err = webhook.New(cfg.Webhook)
+		hook, err = webhook.New(cfg.Webhook, logger)
 		if err != nil {
 			return err
 		}

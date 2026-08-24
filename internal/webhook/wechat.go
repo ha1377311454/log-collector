@@ -14,17 +14,21 @@ import (
 	"time"
 
 	"log-collector/internal/config"
+	"log-collector/internal/logging"
 	"log-collector/internal/model"
 )
 
 // Client 通过企业微信群机器人 Webhook 推送 ERROR 和 FATAL 日志。
 type Client struct {
-	url              string
-	title            string
-	hostname         string
-	maxContentLength int
-	http             *http.Client
-	now              func() time.Time
+	url               string
+	title             string
+	hostname          string
+	maxContentLength  int
+	http              *http.Client
+	now               func() time.Time
+	ignoreKeywords    []string
+	errorTypeKeywords []string
+	log               *logging.Logger
 }
 
 const (
@@ -58,18 +62,42 @@ type webhookResponse struct {
 	ErrMsg  string `json:"errmsg"`
 }
 
-func New(cfg config.WebhookConfig) (*Client, error) {
+func New(cfg config.WebhookConfig, logger *logging.Logger) (*Client, error) {
 	parsed, err := url.Parse(cfg.URL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return nil, errors.New("invalid WeChat webhook URL")
 	}
 	hostname, _ := os.Hostname()
-	return &Client{url: cfg.URL, title: cfg.Title, hostname: hostname, maxContentLength: cfg.MaxContentLength, http: &http.Client{Timeout: cfg.Timeout.Duration}, now: time.Now}, nil
+	if logger == nil {
+		logger = logging.Nop()
+	}
+	return &Client{
+		url:               cfg.URL,
+		title:             cfg.Title,
+		hostname:          hostname,
+		maxContentLength:  cfg.MaxContentLength,
+		http:              &http.Client{Timeout: cfg.Timeout.Duration},
+		now:               time.Now,
+		ignoreKeywords:    append([]string(nil), cfg.IgnoreKeywords...),
+		errorTypeKeywords: append([]string(nil), cfg.ErrorTypeKeywords...),
+		log:               logger,
+	}, nil
 }
 
 // Send 忽略非错误级别；错误日志使用企业微信群机器人 markdown 消息格式同步推送。
 func (c *Client) Send(ctx context.Context, record model.Record) error {
 	if record.SeverityText != "ERROR" && record.SeverityText != "FATAL" {
+		return nil
+	}
+	if keyword, ignored := c.ignoredKeyword(record.Body); ignored {
+		c.log.Debug("WeChat webhook ignored log by keyword",
+			"keyword", keyword,
+			"severity", record.SeverityText,
+			"source", record.ResourceAttributes[sourceRuleKey],
+			"file", record.ResourceAttributes[logFilePathKey],
+			"request_id", record.Attributes[requestIDKey],
+			"body", record.Body,
+		)
 		return nil
 	}
 	payload, err := json.Marshal(markdownMessage{MsgType: "markdown", Markdown: markdownContent{Content: c.content(record)}})
@@ -104,6 +132,20 @@ func (c *Client) Send(ctx context.Context, record model.Record) error {
 	return nil
 }
 
+func (c *Client) ignoredKeyword(body string) (string, bool) {
+	keyword := firstMatchingKeyword(body, c.ignoreKeywords)
+	return keyword, keyword != ""
+}
+
+func firstMatchingKeyword(body string, keywords []string) string {
+	for _, keyword := range keywords {
+		if strings.Contains(body, keyword) {
+			return keyword
+		}
+	}
+	return ""
+}
+
 func (c *Client) content(record model.Record) string {
 	timestamp := record.Timestamp
 	if timestamp.IsZero() {
@@ -115,6 +157,7 @@ func (c *Client) content(record model.Record) string {
 			{label: "主机", value: firstNonEmpty(record.ResourceAttributes[hostNameKey], c.hostname)},
 			{label: "时间", value: timestamp.Format("2006-01-02 15:04:05")},
 			{label: "日志级别", value: record.SeverityText, highlighted: true},
+			{label: "错误类型", value: firstMatchingKeyword(record.Body, c.errorTypeKeywords), highlighted: true},
 			{label: "日志来源", value: record.ResourceAttributes[sourceRuleKey]},
 			{label: "请求 ID", value: record.Attributes[requestIDKey], highlighted: true},
 			{label: "日志文件", value: record.ResourceAttributes[logFilePathKey]},

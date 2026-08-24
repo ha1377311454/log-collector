@@ -60,3 +60,21 @@ func TestRejectsUnknownDropLevel(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestAllowsWebhookOnlyOutput(t *testing.T) {
+	cfg := defaults()
+	cfg.Export.Enabled = false
+	cfg.Webhook.Enabled = true
+	cfg.Webhook.URL = "https://example.com/webhook"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRejectsAllOutputsDisabled(t *testing.T) {
+	cfg := defaults()
+	cfg.Export.Enabled = false
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}

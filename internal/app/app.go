@@ -14,6 +14,7 @@ import (
 	"log-collector/internal/model"
 	"log-collector/internal/state"
 	"log-collector/internal/tailer"
+	"log-collector/internal/webhook"
 )
 
 type targetStore struct {
@@ -38,23 +39,51 @@ func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
 	if err != nil {
 		return err
 	}
-	exp, err := exporter.New(cfg.Export, logger)
-	if err != nil {
-		return err
+	var exp *exporter.Exporter
+	if cfg.Export.Enabled {
+		exp, err = exporter.New(cfg.Export, logger)
+		if err != nil {
+			return err
+		}
+	}
+	var hook *webhook.Client
+	if cfg.Webhook.Enabled {
+		hook, err = webhook.New(cfg.Webhook)
+		if err != nil {
+			return err
+		}
 	}
 	disc, err := discovery.New(cfg.Sources, cfg.Performance.CacheTTL.Duration, logger)
 	if err != nil {
 		return err
 	}
-	limiter := flowcontrol.New(cfg.FlowControl, logger, exp.Enqueue)
+	submit := func(ctx context.Context, record model.Record) error {
+		if hook != nil {
+			if err := hook.Send(ctx, record); err != nil {
+				if exp == nil {
+					return err
+				}
+				// Webhook 告警故障不应阻断仍然可用的 OTLP 日志链路。
+				logger.Warn("send error log to WeChat webhook", "error", err)
+			}
+		}
+		if exp != nil {
+			return exp.Enqueue(ctx, record)
+		}
+		return nil
+	}
+	limiter := flowcontrol.New(cfg.FlowControl, logger, submit)
 	tail := tailer.New(store, cfg.Performance, logger, limiter.Submit)
 
 	loopCtx, stopLoops := context.WithCancel(context.Background())
 	exportCtx, stopExporter := context.WithCancel(context.Background())
 	defer stopLoops()
 	defer stopExporter()
-	exportErr := make(chan error, 1)
-	go func() { exportErr <- exp.Run(exportCtx) }()
+	var exportErr chan error
+	if exp != nil {
+		exportErr = make(chan error, 1)
+		go func() { exportErr <- exp.Run(exportCtx) }()
+	}
 
 	initial, discoverErr := disc.Discover(loopCtx)
 	if discoverErr != nil {
@@ -112,9 +141,11 @@ func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
 		if err := tail.Close(exportCtx); err != nil && runErr == nil {
 			runErr = err
 		}
-		stopExporter()
-		if err := <-exportErr; err != nil && runErr == nil && !errors.Is(err, context.Canceled) {
-			runErr = err
+		if exp != nil {
+			stopExporter()
+			if err := <-exportErr; err != nil && runErr == nil && !errors.Is(err, context.Canceled) {
+				runErr = err
+			}
 		}
 		return runErr
 	}

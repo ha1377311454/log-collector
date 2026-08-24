@@ -18,6 +18,7 @@ type Config struct {
 	State       StateConfig       `yaml:"state"`
 	Sources     SourcesConfig     `yaml:"sources"`
 	Export      ExportConfig      `yaml:"export"`
+	Webhook     WebhookConfig     `yaml:"wechat_webhook"`
 	Performance PerformanceConfig `yaml:"performance"`
 	FlowControl FlowControlConfig `yaml:"flow_control"`
 }
@@ -111,6 +112,7 @@ type MultilineConfig struct {
 
 // ExportConfig 定义 OTLP/HTTP 批量上报、内存队列及重试参数。
 type ExportConfig struct {
+	Enabled       bool              `yaml:"enabled"`
 	Endpoint      string            `yaml:"endpoint"`
 	Headers       map[string]string `yaml:"headers"`
 	Compression   string            `yaml:"compression"`
@@ -121,6 +123,15 @@ type ExportConfig struct {
 	QueueSize     int               `yaml:"queue_size"`
 	MaxQueueBytes int64             `yaml:"max_queue_bytes"`
 	Retry         RetryConfig       `yaml:"retry"`
+}
+
+// WebhookConfig 定义企业微信群机器人错误日志推送配置。
+type WebhookConfig struct {
+	Enabled          bool     `yaml:"enabled"`
+	URL              string   `yaml:"url"`
+	Title            string   `yaml:"title"`
+	Timeout          Duration `yaml:"timeout"`
+	MaxContentLength int      `yaml:"max_content_length"`
 }
 
 // RetryConfig 定义指数退避策略；MaxElapsed 为 0 表示不限制总重试时间。
@@ -166,8 +177,9 @@ func defaults() Config {
 		Log: LogConfig{Level: "info", Format: "json", File: "./logs/log-collector.log", AlsoStdout: true, MaxSizeMB: 100, MaxBackups: 10, MaxAgeDays: 7, Compress: true}, State: StateConfig{Path: "./data/positions.json"},
 		Performance: PerformanceConfig{DiscoveryInterval: Duration{5 * time.Second}, ReadInterval: Duration{time.Second}, PositionFlushInterval: Duration{15 * time.Second}, WorkerCount: 4, MaxReadBytesPerFile: 4 * 1024 * 1024, MaxLogSize: 1024 * 1024, MaxMultilineSize: 4 * 1024 * 1024, MaxMultilineLines: 1000, CacheTTL: Duration{24 * time.Hour}},
 		FlowControl: FlowControlConfig{RatePerSecond: 1000, Burst: 2000, Mode: "block", ReportInterval: Duration{10 * time.Second}},
-		Export: ExportConfig{Timeout: Duration{10 * time.Second}, BatchSize: 500, MaxBatchBytes: 4 * 1024 * 1024, FlushInterval: Duration{time.Second}, QueueSize: 10000, MaxQueueBytes: 64 * 1024 * 1024,
+		Export: ExportConfig{Enabled: true, Timeout: Duration{10 * time.Second}, BatchSize: 500, MaxBatchBytes: 4 * 1024 * 1024, FlushInterval: Duration{time.Second}, QueueSize: 10000, MaxQueueBytes: 64 * 1024 * 1024,
 			Retry: RetryConfig{Enabled: true, Initial: Duration{time.Second}, MaxInterval: Duration{30 * time.Second}, MaxElapsed: Duration{5 * time.Minute}}},
+		Webhook: WebhookConfig{Title: "日志异常告警", Timeout: Duration{5 * time.Second}, MaxContentLength: 4000},
 	}
 }
 
@@ -185,14 +197,36 @@ func (c Config) Validate() error {
 	if c.Log.MaxSizeMB <= 0 || c.Log.MaxBackups < 0 || c.Log.MaxAgeDays < 0 {
 		return errors.New("log rotation values are invalid")
 	}
-	if c.Export.Endpoint == "" {
-		return errors.New("export.endpoint is required")
+	if !c.Export.Enabled && !c.Webhook.Enabled {
+		return errors.New("export and wechat_webhook cannot both be disabled")
 	}
 	if c.State.Path == "" {
 		return errors.New("state.path is required")
 	}
-	if c.Export.Compression != "" && c.Export.Compression != "gzip" {
-		return errors.New("export.compression must be empty or gzip")
+	if c.Export.Enabled {
+		if c.Export.Endpoint == "" {
+			return errors.New("export.endpoint is required when export is enabled")
+		}
+		if c.Export.Compression != "" && c.Export.Compression != "gzip" {
+			return errors.New("export.compression must be empty or gzip")
+		}
+		if c.Export.BatchSize <= 0 || c.Export.QueueSize <= 0 || c.Export.MaxBatchBytes <= 0 || c.Export.MaxQueueBytes <= 0 {
+			return errors.New("export batch_size, max_batch_bytes, queue_size and max_queue_bytes must be positive")
+		}
+		if c.Export.MaxQueueBytes < c.Export.MaxBatchBytes {
+			return errors.New("export.max_queue_bytes must be greater than or equal to max_batch_bytes")
+		}
+		if c.Export.FlushInterval.Duration <= 0 || c.Export.Timeout.Duration <= 0 {
+			return errors.New("export flush_interval and timeout must be positive")
+		}
+	}
+	if c.Webhook.Enabled {
+		if c.Webhook.URL == "" {
+			return errors.New("wechat_webhook.url is required when webhook is enabled")
+		}
+		if c.Webhook.Timeout.Duration <= 0 || c.Webhook.MaxContentLength <= 0 {
+			return errors.New("wechat_webhook timeout and max_content_length must be positive")
+		}
 	}
 	if c.Performance.DiscoveryInterval.Duration <= 0 || c.Performance.ReadInterval.Duration <= 0 || c.Performance.PositionFlushInterval.Duration <= 0 {
 		return errors.New("performance intervals must be positive")
@@ -210,15 +244,6 @@ func (c Config) Validate() error {
 		if c.FlowControl.Mode != "block" && c.FlowControl.Mode != "drop" {
 			return errors.New("flow_control.mode must be block or drop")
 		}
-	}
-	if c.Export.BatchSize <= 0 || c.Export.QueueSize <= 0 || c.Export.MaxBatchBytes <= 0 || c.Export.MaxQueueBytes <= 0 {
-		return errors.New("export batch_size, max_batch_bytes, queue_size and max_queue_bytes must be positive")
-	}
-	if c.Export.MaxQueueBytes < c.Export.MaxBatchBytes {
-		return errors.New("export.max_queue_bytes must be greater than or equal to max_batch_bytes")
-	}
-	if c.Export.FlushInterval.Duration <= 0 || c.Export.Timeout.Duration <= 0 {
-		return errors.New("export flush_interval and timeout must be positive")
 	}
 	for _, r := range c.Sources.Processes {
 		if r.Name == "" || (r.CommRegex == "" && r.CmdlineRegex == "") || r.IncludeRegex == "" {

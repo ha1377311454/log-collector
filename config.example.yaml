@@ -132,6 +132,8 @@ sources:
 
 # OpenTelemetry Logs Protocol 的 OTLP/HTTP 输出配置。
 export:
+  # 关闭后不创建 OTLP Exporter，也不会请求 /v1/logs。
+  enabled: true
   # 未填写 URL path 时自动补充 /v1/logs；也可以填写完整的接收地址。
   endpoint: http://127.0.0.1:4318
   # 可选 HTTP 请求头。生产环境建议通过部署系统注入真实密钥并限制配置文件权限。
@@ -160,3 +162,14 @@ export:
     max_interval: 30s
     # 单个批次允许重试的总时长；0 表示不限制。
     max_elapsed_time: 5m
+
+# 企业微信群机器人 Webhook，只推送 ERROR 和 FATAL 日志。
+wechat_webhook:
+  enabled: false
+  # Markdown 消息顶部标题。
+  title: 日志异常告警
+  # Webhook 地址包含机器人密钥，请通过部署系统注入并限制配置文件权限。
+  url: ''
+  timeout: 5s
+  # 单条消息最多保留的字符数，超出部分会追加 truncated 标记。
+  max_content_length: 4000

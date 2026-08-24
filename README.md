@@ -8,8 +8,9 @@
 - 按 glob 独立采集自定义日志文件。
 - 采集 Kubernetes/CRI `/var/log/containers/*.log` 标准输出，识别 CRI 时间、stdout/stderr 和 P/F 标记。
 - 以 `device:inode` 保存读取位点，原子写入 position 文件；文件 truncate 后从头读取。
-- 支持“新记录起始行”或“上一条记录续行”两种多行模式。
+- 支持按时间首行规则合并多行日志，非首行内容自动追加到上一条记录。
 - 自动识别常见日志级别，并写入 OTLP `severity_text`、`severity_number` 和 `log.level` 属性。
+- 支持将 ERROR/FATAL 日志推送到企业微信群机器人，并可独立关闭 OTLP `/v1/logs` 输出。
 - 批量构造 OTLP Logs protobuf，通过 OTLP/HTTP 上报，支持 gzip、headers、超时、字节级内存边界和指数退避重试。
 - 进程快照单次复用、固定读取 worker、dirty 位点刷盘、读取大小上限和 OTLP ResourceLogs 聚合。
 - 自身运行日志使用 zap，并通过 lumberjack 支持按大小滚动、历史数量、保留天数和 gzip 压缩。
@@ -159,6 +160,30 @@ export:
 ```
 
 `max_queue_bytes` 必须大于或等于 `max_batch_bytes`。单条记录超过队列字节上限时会返回错误，不会无限占用内存。HTTP 408、429、5xx 和网络错误会重试；其他 4xx 配置类错误直接返回。
+
+如需关闭 OTLP 输出：
+
+```yaml
+export:
+  enabled: false
+```
+
+关闭后不会创建 OTLP 队列和发送协程，也不会访问 `/v1/logs`。
+
+## 企业微信错误日志推送
+
+```yaml
+wechat_webhook:
+  enabled: true
+  url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=replace-me'
+  title: 日志异常告警
+  timeout: 5s
+  max_content_length: 4000
+```
+
+只有解析为 `ERROR` 或 `FATAL` 的日志会推送。消息使用 Markdown 告警样式，包含主机、时间、日志级别、来源规则、文件路径、可选的 `request.id` 和多行合并后的正文。正文按原始换行逐行输出，不插入 `<br>`，并转义反引号以避免 SQL 字段被渲染成行内代码。主机优先读取 `host.name` Resource 属性，否则使用采集器所在主机名。Webhook 地址包含机器人密钥，不会被程序写入错误日志；生产环境应通过部署系统注入并限制配置文件权限。
+
+OTLP 和企业微信可以同时开启，也可以只开启其中一个；两者同时关闭会导致启动配置校验失败。两者同时开启时，Webhook 暂时失败不会阻断 OTLP 输出；仅启用 Webhook 时，推送失败会返回错误，避免日志在没有任何成功输出的情况下继续推进位点。
 
 ## 验证命令
 

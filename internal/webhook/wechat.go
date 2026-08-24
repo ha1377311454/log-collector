@@ -24,7 +24,25 @@ type Client struct {
 	hostname         string
 	maxContentLength int
 	http             *http.Client
+	now              func() time.Time
 }
+
+const (
+	defaultTitle   = "日志异常告警"
+	warningOpen    = `<font color="warning">`
+	warningClose   = `</font>`
+	hostNameKey    = "host.name"
+	sourceRuleKey  = "log.source.rule"
+	logFilePathKey = "log.file.path"
+	requestIDKey   = "request.id"
+)
+
+var markdownEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	"`", "\\`",
+	"<", "\\<",
+	">", "\\>",
+)
 
 type markdownMessage struct {
 	MsgType  string          `json:"msgtype"`
@@ -46,7 +64,7 @@ func New(cfg config.WebhookConfig) (*Client, error) {
 		return nil, errors.New("invalid WeChat webhook URL")
 	}
 	hostname, _ := os.Hostname()
-	return &Client{url: cfg.URL, title: cfg.Title, hostname: hostname, maxContentLength: cfg.MaxContentLength, http: &http.Client{Timeout: cfg.Timeout.Duration}}, nil
+	return &Client{url: cfg.URL, title: cfg.Title, hostname: hostname, maxContentLength: cfg.MaxContentLength, http: &http.Client{Timeout: cfg.Timeout.Duration}, now: time.Now}, nil
 }
 
 // Send 忽略非错误级别；错误日志使用企业微信群机器人 markdown 消息格式同步推送。
@@ -87,79 +105,123 @@ func (c *Client) Send(ctx context.Context, record model.Record) error {
 }
 
 func (c *Client) content(record model.Record) string {
-	title := c.title
-	if title == "" {
-		title = "日志异常告警"
-	}
-	hostname := record.ResourceAttributes["host.name"]
-	if hostname == "" {
-		hostname = c.hostname
-	}
 	timestamp := record.Timestamp
 	if timestamp.IsZero() {
-		timestamp = time.Now()
+		timestamp = c.now()
 	}
-
-	var header strings.Builder
-	fmt.Fprintf(&header, "### 🚨 %s", escape(title))
-	if hostname != "" {
-		fmt.Fprintf(&header, "\n> **主机：** %s", escape(hostname))
+	alert := markdownAlert{
+		title: firstNonEmpty(c.title, defaultTitle),
+		fields: []alertField{
+			{label: "主机", value: firstNonEmpty(record.ResourceAttributes[hostNameKey], c.hostname)},
+			{label: "时间", value: timestamp.Format("2006-01-02 15:04:05")},
+			{label: "日志级别", value: record.SeverityText, highlighted: true},
+			{label: "日志来源", value: record.ResourceAttributes[sourceRuleKey]},
+			{label: "请求 ID", value: record.Attributes[requestIDKey], highlighted: true},
+			{label: "日志文件", value: record.ResourceAttributes[logFilePathKey]},
+		},
+		body: record.Body,
 	}
-	fmt.Fprintf(&header, "\n> **时间：** %s", timestamp.Format("2006-01-02 15:04:05"))
-	fmt.Fprintf(&header, "\n> **日志级别：** <font color=\"warning\">%s</font>", escape(record.SeverityText))
-	if value := record.ResourceAttributes["log.source.rule"]; value != "" {
-		fmt.Fprintf(&header, "\n> **日志来源：** %s", escape(value))
-	}
-	if value := record.Attributes["request.id"]; value != "" {
-		fmt.Fprintf(&header, "\n> **请求 ID：** <font color=\"warning\">%s</font>", escape(value))
-	}
-	if value := record.ResourceAttributes["log.file.path"]; value != "" {
-		fmt.Fprintf(&header, "\n> **日志文件：** %s", escape(value))
-	}
-	header.WriteString("\n\n**日志内容**")
-	return appendBodyLines(header.String(), record.Body, c.maxContentLength)
+	return alert.render(c.maxContentLength)
 }
+
+type markdownAlert struct {
+	title  string
+	fields []alertField
+	body   string
+}
+
+type alertField struct {
+	label       string
+	value       string
+	highlighted bool
+}
+
+func (a markdownAlert) render(limit int) string {
+	writer := newMarkdownWriter(limit)
+	writer.line("### 🚨 ", escape(a.title), "")
+	for _, field := range a.fields {
+		writer.field(field)
+	}
+	writer.blankLine()
+	writer.line("**日志内容**", "", "")
+	for _, line := range strings.Split(a.body, "\n") {
+		if !writer.line("> "+warningOpen, escape(line), warningClose) {
+			break
+		}
+	}
+	return writer.String()
+}
+
+type markdownWriter struct {
+	content   strings.Builder
+	remaining int
+}
+
+func newMarkdownWriter(limit int) *markdownWriter {
+	return &markdownWriter{remaining: limit}
+}
+
+func (w *markdownWriter) field(field alertField) {
+	if field.value == "" {
+		return
+	}
+	prefix, suffix := "> **"+field.label+"：** ", ""
+	if field.highlighted {
+		prefix += warningOpen
+		suffix = warningClose
+	}
+	w.line(prefix, escape(field.value), suffix)
+}
+
+func (w *markdownWriter) line(prefix, value, suffix string) bool {
+	separator := ""
+	if w.content.Len() > 0 {
+		separator = "\n"
+	}
+	fixedLength := runeLen(separator) + runeLen(prefix) + runeLen(suffix)
+	if w.remaining < fixedLength {
+		return false
+	}
+	rendered := truncate(value, w.remaining-fixedLength)
+	w.content.WriteString(separator)
+	w.content.WriteString(prefix)
+	w.content.WriteString(rendered)
+	w.content.WriteString(suffix)
+	w.remaining -= fixedLength + runeLen(rendered)
+	return true
+}
+
+func (w *markdownWriter) blankLine() {
+	if w.remaining > 0 && w.content.Len() > 0 {
+		w.content.WriteByte('\n')
+		w.remaining--
+	}
+}
+
+func (w *markdownWriter) String() string { return w.content.String() }
 
 // escape 只转义会改变日志展示语义的 Markdown/HTML 定界符；转义符本身不会显示。
 func escape(value string) string {
-	return strings.NewReplacer(
-		`\`, `\\`,
-		"`", "\\`",
-		"<", "\\<",
-		">", "\\>",
-	).Replace(value)
+	return markdownEscaper.Replace(value)
 }
 
-func appendBodyLines(header, body string, limit int) string {
-	var content strings.Builder
-	content.WriteString(header)
-	used := len([]rune(header))
-	for _, line := range strings.Split(body, "\n") {
-		const linePrefix = "\n> <font color=\"warning\">"
-		const lineSuffix = "</font>"
-		wrapperLength := len([]rune(linePrefix)) + len([]rune(lineSuffix))
-		remaining := limit - used - wrapperLength
-		if remaining <= 0 {
-			break
-		}
-		rendered := truncate(escape(line), remaining)
-		content.WriteString(linePrefix)
-		content.WriteString(rendered)
-		content.WriteString(lineSuffix)
-		used += wrapperLength + len([]rune(rendered))
-		if used >= limit {
-			break
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
 		}
 	}
-	return content.String()
+	return ""
 }
+
+func runeLen(value string) int { return len([]rune(value)) }
 
 func truncate(value string, limit int) string {
 	runes := []rune(value)
 	if len(runes) <= limit {
 		return value
 	}
-	const suffix = "\n...[truncated]"
+	const suffix = "...[truncated]"
 	suffixRunes := []rune(suffix)
 	if limit <= len(suffixRunes) {
 		return string(runes[:limit])

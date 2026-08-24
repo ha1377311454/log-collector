@@ -2,6 +2,7 @@ package tailer
 
 import (
 	"bufio"
+	"context"
 	"regexp"
 	"strings"
 	"testing"
@@ -102,5 +103,29 @@ func TestPreparedRecordExtractsConfiguredAttribute(t *testing.T) {
 	record := preparedRecord(target, body, time.Time{}, nil)
 	if record.Attributes["request.id"] != "qzJFsZlazjUljpmV" {
 		t.Fatalf("request.id = %q", record.Attributes["request.id"])
+	}
+}
+
+func TestConfiguredSeverityIsDroppedBeforeEmit(t *testing.T) {
+	target := model.FileTarget{
+		Path:       "/tmp/app.log",
+		SourceType: "file",
+		Rule:       "app",
+		DropLevels: map[string]struct{}{"DEBUG": {}},
+	}
+	record := preparedRecord(target, "DEBUG diagnostic detail", time.Time{}, nil)
+	if !record.Dropped {
+		t.Fatal("DEBUG record must be marked as dropped")
+	}
+	called := false
+	tailer := &Tailer{emit: func(context.Context, model.Record) error {
+		called = true
+		return nil
+	}}
+	if err := tailer.emitPrepared(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("dropped record must not reach downstream emitter")
 	}
 }

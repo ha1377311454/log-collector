@@ -16,6 +16,7 @@ type FileTarget struct {
 	Multiline  Multiline
 	Attributes map[string]string
 	Extractors []AttributeExtractor
+	DropLevels map[string]struct{}
 	// ResourceAttributes 和 ResourceKey 在发现阶段预计算，避免每条日志重复复制和排序。
 	ResourceAttributes map[string]string
 	ResourceKey        string
@@ -41,6 +42,7 @@ type Record struct {
 	ObservedTimestamp  time.Time
 	SeverityText       string
 	SeverityNumber     int32
+	Dropped            bool
 	Attributes         map[string]string
 	ResourceAttributes map[string]string
 	ResourceKey        string

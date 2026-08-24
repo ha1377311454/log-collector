@@ -300,6 +300,9 @@ func (t *Tailer) emitRecord(ctx context.Context, target model.FileTarget, body s
 }
 
 func (t *Tailer) emitPrepared(ctx context.Context, record model.Record) error {
+	if record.Dropped {
+		return nil
+	}
 	if record.Timestamp.IsZero() {
 		record.Timestamp = time.Now()
 	}
@@ -334,7 +337,8 @@ func preparedRecord(target model.FileTarget, body string, timestamp time.Time, a
 			attrs[extractor.Key] = match[1]
 		}
 	}
-	return model.Record{Body: body, Timestamp: timestamp, SeverityText: severityText, SeverityNumber: severityNumber, Attributes: attrs, ResourceAttributes: target.ResourceAttributes, ResourceKey: target.ResourceKey}
+	_, dropped := target.DropLevels[severityText]
+	return model.Record{Body: body, Timestamp: timestamp, SeverityText: severityText, SeverityNumber: severityNumber, Dropped: dropped, Attributes: attrs, ResourceAttributes: target.ResourceAttributes, ResourceKey: target.ResourceKey}
 }
 
 // parseSeverity 从日志首行识别常见级别，并映射到 OTLP SeverityNumber 的基础档位。

@@ -51,3 +51,12 @@ func TestRejectsAttributeExtractorWithoutCaptureGroup(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestRejectsUnknownDropLevel(t *testing.T) {
+	cfg := defaults()
+	cfg.Export.Endpoint = "http://localhost:4318"
+	cfg.Sources.Files = []FileRule{{Name: "x", Include: []string{"*.log"}, DropLevels: []string{"verbose"}}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}

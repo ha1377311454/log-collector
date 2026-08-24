@@ -119,6 +119,18 @@ attribute_extractors:
 
 例如日志片段 `DEBUG - qzJFsZlazjUljpmV -` 会生成 `request.id=qzJFsZlazjUljpmV`。抽取在多行合并完成后执行，因此正则可以匹配完整日志正文。
 
+### 按日志级别丢弃
+
+每个进程、文件或容器规则都可以配置不发送的日志级别：
+
+```yaml
+drop_levels:
+  - TRACE
+  - DEBUG
+```
+
+支持 `TRACE`、`DEBUG`、`INFO`、`WARN`、`ERROR` 和 `FATAL`，配置值不区分大小写。日志会先完成多行合并和级别标准化；命中 `drop_levels` 后仍会正常推进文件读取位点，但不会进入流控器、Exporter 队列或 OTLP 请求。未识别出级别的日志不会被该配置丢弃。
+
 ## OTLP 输出
 
 采集器会从每条日志的首行识别 `TRACE`、`DEBUG`、`INFO`、`NOTICE`、`WARN/WARNING`、`ERROR/ERR`、`FATAL/CRITICAL/CRIT/ALERT/EMERG/PANIC`。级别会归一化为 `TRACE`、`DEBUG`、`INFO`、`WARN`、`ERROR` 或 `FATAL`，并同时写入 OTLP 标准严重性字段和 `log.level` 属性；未识别到级别时保持 OTLP 严重性未指定。多行日志仅以首行为准。

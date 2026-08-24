@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -80,6 +81,7 @@ type ProcessRule struct {
 	Multiline    MultilineConfig            `yaml:"multiline"`
 	Attributes   map[string]string          `yaml:"attributes"`
 	Extractors   []AttributeExtractorConfig `yaml:"attribute_extractors"`
+	DropLevels   []string                   `yaml:"drop_levels"`
 }
 
 // FileRule 定义基于文件 glob 的日志源，同时用于普通文件和容器标准输出。
@@ -92,6 +94,7 @@ type FileRule struct {
 	Multiline  MultilineConfig            `yaml:"multiline"`
 	Attributes map[string]string          `yaml:"attributes"`
 	Extractors []AttributeExtractorConfig `yaml:"attribute_extractors"`
+	DropLevels []string                   `yaml:"drop_levels"`
 }
 
 // AttributeExtractorConfig 使用正则表达式的第一个捕获组生成日志记录属性。
@@ -239,6 +242,9 @@ func (c Config) Validate() error {
 		if err := validateAttributeExtractors(r.Extractors); err != nil {
 			return fmt.Errorf("process rule %q: %w", r.Name, err)
 		}
+		if err := validateDropLevels(r.DropLevels); err != nil {
+			return fmt.Errorf("process rule %q: %w", r.Name, err)
+		}
 	}
 	for _, group := range [][]FileRule{c.Sources.Files, c.Sources.Containers} {
 		for _, r := range group {
@@ -264,7 +270,27 @@ func (c Config) Validate() error {
 			if err := validateAttributeExtractors(r.Extractors); err != nil {
 				return fmt.Errorf("file rule %q: %w", r.Name, err)
 			}
+			if err := validateDropLevels(r.DropLevels); err != nil {
+				return fmt.Errorf("file rule %q: %w", r.Name, err)
+			}
 		}
+	}
+	return nil
+}
+
+func validateDropLevels(levels []string) error {
+	seen := make(map[string]struct{}, len(levels))
+	for _, level := range levels {
+		normalized := strings.ToUpper(level)
+		switch normalized {
+		case "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL":
+		default:
+			return fmt.Errorf("drop level %q must be TRACE, DEBUG, INFO, WARN, ERROR or FATAL", level)
+		}
+		if _, exists := seen[normalized]; exists {
+			return fmt.Errorf("duplicate drop level %q", level)
+		}
+		seen[normalized] = struct{}{}
 	}
 	return nil
 }

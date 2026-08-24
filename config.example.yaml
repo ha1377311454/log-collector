@@ -81,6 +81,10 @@ sources:
       attribute_extractors:
         - key: request.id
           pattern: '\b(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s+-\s+(\S+)\s+-'
+      # 可选：命中这些标准化日志级别的记录会推进读取位点，但不会发送。
+      drop_levels:
+        - TRACE
+        - DEBUG
       # 自定义 OTLP Resource 属性。程序会额外补充 process.pid/name/command_line。
       attributes:
         service.namespace: business

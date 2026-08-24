@@ -43,6 +43,7 @@ archives:
     files:
       - README.md
       - config.example.yaml
+      - LICENSE
 
 # 为全部发布制品生成 SHA-256 校验文件。
 checksum:

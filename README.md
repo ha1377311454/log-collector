@@ -2,6 +2,8 @@
 
 独立的 YAML 驱动日志采集器。它结合了进程文件描述符发现与 OpenTelemetry 风格的文件读取/OTLP 上报，不依赖平台配置下发。
 
+本项目基于 [Apache License 2.0](LICENSE) 开源。
+
 ## 能力
 
 - 使用 `gopsutil/v4/process` 按进程名、命令行规则发现进程和已打开日志文件。
@@ -292,3 +294,7 @@ git push origin v0.1.0
 ```bash
 goreleaser release --clean
 ```
+
+## 联系方式
+
+如有问题或建议，请发送邮件至 [1617802907@qq.com](mailto:1617802907@qq.com)。

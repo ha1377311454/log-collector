@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"log-collector/internal/model"
 )
 
 func TestParseCRI(t *testing.T) {
@@ -55,5 +57,32 @@ func TestTruncateRunesReplacesInvalidBytes(t *testing.T) {
 func TestParseCRIRejectsPlainText(t *testing.T) {
 	if _, _, _, _, ok := parseCRI("plain text"); ok {
 		t.Fatal("plain text must not parse as CRI")
+	}
+}
+
+func TestParseSeverity(t *testing.T) {
+	tests := []struct {
+		body   string
+		text   string
+		number int32
+	}{
+		{"2026-08-24 10:00:00.000 [main] INFO application started", "INFO", 9},
+		{"time=2026-08-24T10:00:00Z level=warning msg=slow", "WARN", 13},
+		{"ERROR request failed\n\tat demo.Service.call(Service.java:10)", "ERROR", 17},
+		{"panic: unrecoverable", "FATAL", 21},
+		{"request completed successfully", "", 0},
+	}
+	for _, tt := range tests {
+		text, number := parseSeverity(tt.body)
+		if text != tt.text || number != tt.number {
+			t.Errorf("parseSeverity(%q) = (%q, %d), want (%q, %d)", tt.body, text, number, tt.text, tt.number)
+		}
+	}
+}
+
+func TestPreparedRecordAddsLogLevelAttribute(t *testing.T) {
+	record := preparedRecord(model.FileTarget{Path: "/tmp/app.log", SourceType: "file", Rule: "app"}, "[DEBUG] detail", time.Time{}, nil)
+	if record.SeverityText != "DEBUG" || record.SeverityNumber != 5 || record.Attributes["log.level"] != "DEBUG" {
+		t.Fatalf("unexpected severity record: %+v", record)
 	}
 }

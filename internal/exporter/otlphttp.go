@@ -189,7 +189,7 @@ func (e *Exporter) send(ctx context.Context, records []model.Record) error {
 	}
 	groups := make(map[string]*group)
 	for _, r := range records {
-		lr := &logsv1.LogRecord{TimeUnixNano: uint64(r.Timestamp.UnixNano()), ObservedTimeUnixNano: uint64(r.ObservedTimestamp.UnixNano()), Body: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: r.Body}}, Attributes: keyValues(r.Attributes)}
+		lr := &logsv1.LogRecord{TimeUnixNano: uint64(r.Timestamp.UnixNano()), ObservedTimeUnixNano: uint64(r.ObservedTimestamp.UnixNano()), SeverityText: r.SeverityText, SeverityNumber: logsv1.SeverityNumber(r.SeverityNumber), Body: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: r.Body}}, Attributes: keyValues(r.Attributes)}
 		key := r.ResourceKey
 		if key == "" {
 			key = attributeKey(r.ResourceAttributes)

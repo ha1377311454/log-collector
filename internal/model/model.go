@@ -29,6 +29,8 @@ type Record struct {
 	Body               string
 	Timestamp          time.Time
 	ObservedTimestamp  time.Time
+	SeverityText       string
+	SeverityNumber     int32
 	Attributes         map[string]string
 	ResourceAttributes map[string]string
 	ResourceKey        string

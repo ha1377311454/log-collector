@@ -72,9 +72,9 @@ sources:
       # 没有历史位点的新文件从哪里开始：beginning 或 end；默认 end。
       start_at: end
       multiline:
-        # 匹配表示当前行属于上一条日志，适合 Java 异常堆栈。
+        # 匹配表示当前行属于上一条 Java 日志。
         # continuation_pattern 与 start_pattern 只能配置一个。
-        continuation_pattern: '^(\s+at\s|Caused by:|Suppressed:)'
+        continuation_pattern: '^[^(\d{4}\-\d{2}\-\d{2}\s\d{2}:\d{2}:\d{2})]|^(\s+|\})'
         # 最后一条多行日志长时间没有新行时，等待多久后强制输出；默认 5s。
         flush_after: 3s
       # 自定义 OTLP Resource 属性。程序会额外补充 process.pid/name/command_line。
@@ -100,8 +100,8 @@ sources:
       # 首次发现时读取已有历史内容；恢复时仍以 position 文件为准。
       start_at: beginning
       multiline:
-        # 匹配表示一条新日志开始，适合带日期前缀的应用日志。
-        start_pattern: '^\d{4}-\d{2}-\d{2}[ T]'
+        # 匹配表示当前行属于上一条 Java 日志。
+        continuation_pattern: '^[^(\d{4}\-\d{2}\-\d{2}\s\d{2}:\d{2}:\d{2})]|^(\s+|\})'
         flush_after: 3s
 
   # 容器标准输出规则。Kubernetes 部署时需要只读挂载宿主机 /var/log/containers。

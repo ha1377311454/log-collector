@@ -9,6 +9,7 @@
 - 采集 Kubernetes/CRI `/var/log/containers/*.log` 标准输出，识别 CRI 时间、stdout/stderr 和 P/F 标记。
 - 以 `device:inode` 保存读取位点，原子写入 position 文件；文件 truncate 后从头读取。
 - 支持“新记录起始行”或“上一条记录续行”两种多行模式。
+- 自动识别常见日志级别，并写入 OTLP `severity_text`、`severity_number` 和 `log.level` 属性。
 - 批量构造 OTLP Logs protobuf，通过 OTLP/HTTP 上报，支持 gzip、headers、超时、字节级内存边界和指数退避重试。
 - 进程快照单次复用、固定读取 worker、dirty 位点刷盘、读取大小上限和 OTLP ResourceLogs 聚合。
 - 自身运行日志使用 zap，并通过 lumberjack 支持按大小滚动、历史数量、保留天数和 gzip 压缩。
@@ -107,6 +108,8 @@ CRI 的 `P`（partial）记录会保留为独立的 OTLP LogRecord，并通过 `
 未遇到下一条记录时，`flush_after` 到期会输出缓冲内容，默认值为 5 秒。
 
 ## OTLP 输出
+
+采集器会从每条日志的首行识别 `TRACE`、`DEBUG`、`INFO`、`NOTICE`、`WARN/WARNING`、`ERROR/ERR`、`FATAL/CRITICAL/CRIT/ALERT/EMERG/PANIC`。级别会归一化为 `TRACE`、`DEBUG`、`INFO`、`WARN`、`ERROR` 或 `FATAL`，并同时写入 OTLP 标准严重性字段和 `log.level` 属性；未识别到级别时保持 OTLP 严重性未指定。多行日志仅以首行为准。
 
 `export.endpoint` 可填写 `http://host:4318`，程序自动补充 `/v1/logs`；也可以填写完整地址。请求格式为：
 

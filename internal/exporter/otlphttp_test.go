@@ -35,11 +35,15 @@ func TestSendOTLPProtobuf(t *testing.T) {
 	}
 	now := time.Now()
 	resource := map[string]string{"service.name": "demo"}
-	if err := e.send(context.Background(), []model.Record{{Body: "hello", Timestamp: now, ObservedTimestamp: now, ResourceAttributes: resource}, {Body: "world", Timestamp: now, ObservedTimestamp: now, ResourceAttributes: resource}}); err != nil {
+	if err := e.send(context.Background(), []model.Record{{Body: "hello", Timestamp: now, ObservedTimestamp: now, SeverityText: "ERROR", SeverityNumber: 17, ResourceAttributes: resource}, {Body: "world", Timestamp: now, ObservedTimestamp: now, ResourceAttributes: resource}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(got.ResourceLogs) != 1 || len(got.ResourceLogs[0].ScopeLogs[0].LogRecords) != 2 || got.ResourceLogs[0].ScopeLogs[0].LogRecords[0].Body.GetStringValue() != "hello" {
 		t.Fatalf("unexpected request: %v", &got)
+	}
+	first := got.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+	if first.SeverityText != "ERROR" || first.SeverityNumber != 17 {
+		t.Fatalf("unexpected severity: text=%q number=%d", first.SeverityText, first.SeverityNumber)
 	}
 }
 

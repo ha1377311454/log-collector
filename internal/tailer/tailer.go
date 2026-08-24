@@ -53,6 +53,8 @@ type pending struct {
 	start, continuation *regexp.Regexp
 }
 
+var severityPattern = regexp.MustCompile(`(?i)(?:^|[\s\[\]():=\-])(TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRITICAL|CRIT|ALERT|EMERG|PANIC)(?:$|[\s\[\]():=\-])`)
+
 func New(store *state.Store, performance config.PerformanceConfig, logger *logging.Logger, emit func(context.Context, model.Record) error) *Tailer {
 	return &Tailer{state: store, log: logger, emit: emit, workers: performance.WorkerCount, maxReadBytes: performance.MaxReadBytesPerFile, maxLogSize: performance.MaxLogSize, maxMultilineSize: performance.MaxMultilineSize, maxLines: performance.MaxMultilineLines, pending: make(map[string]*pending), jobs: make(chan readJob)}
 }
@@ -317,7 +319,43 @@ func preparedRecord(target model.FileTarget, body string, timestamp time.Time, a
 		resource["log.source.rule"] = target.Rule
 		target.ResourceAttributes = resource
 	}
-	return model.Record{Body: body, Timestamp: timestamp, Attributes: attrs, ResourceAttributes: target.ResourceAttributes, ResourceKey: target.ResourceKey}
+	severityText, severityNumber := parseSeverity(body)
+	if severityText != "" {
+		if attrs == nil {
+			attrs = make(map[string]string, 1)
+		}
+		attrs["log.level"] = severityText
+	}
+	return model.Record{Body: body, Timestamp: timestamp, SeverityText: severityText, SeverityNumber: severityNumber, Attributes: attrs, ResourceAttributes: target.ResourceAttributes, ResourceKey: target.ResourceKey}
+}
+
+// parseSeverity 从日志首行识别常见级别，并映射到 OTLP SeverityNumber 的基础档位。
+// 多行异常只读取首行，避免堆栈正文中的 ERROR 等单词覆盖真实级别。
+func parseSeverity(body string) (string, int32) {
+	firstLine := body
+	if index := strings.IndexByte(firstLine, '\n'); index >= 0 {
+		firstLine = firstLine[:index]
+	}
+	match := severityPattern.FindStringSubmatch(firstLine)
+	if len(match) < 2 {
+		return "", 0
+	}
+	switch strings.ToUpper(match[1]) {
+	case "TRACE":
+		return "TRACE", 1
+	case "DEBUG":
+		return "DEBUG", 5
+	case "INFO", "NOTICE":
+		return "INFO", 9
+	case "WARN", "WARNING":
+		return "WARN", 13
+	case "ERROR", "ERR":
+		return "ERROR", 17
+	case "FATAL", "CRITICAL", "CRIT", "ALERT", "EMERG", "PANIC":
+		return "FATAL", 21
+	default:
+		return "", 0
+	}
 }
 func identity(info os.FileInfo) (string, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)

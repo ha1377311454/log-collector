@@ -3,12 +3,14 @@ SHELL := /bin/sh
 APP_NAME := log-collector
 MAIN_PACKAGE := ./cmd/log-collector
 DIST_DIR := dist
+DOCKER_IMAGE ?= log-collector:latest
+DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
 
 .DEFAULT_GOAL := help
 
 .PHONY: help fmt tidy test vet build clean run \
 	build-linux build-linux-amd64 build-linux-arm64 \
-	release-check release-snapshot release-local
+	docker-build docker-build-multi release-check release-snapshot release-local
 
 help: ## 显示可用命令
 	@awk 'BEGIN {FS = ":.*## "; printf "用法: make <target>\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -38,6 +40,12 @@ build-linux-amd64: ## 构建 Linux AMD64 可执行文件
 build-linux-arm64: ## 构建 Linux ARM64 可执行文件
 	mkdir -p $(DIST_DIR)
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o $(DIST_DIR)/$(APP_NAME)-linux-arm64 $(MAIN_PACKAGE)
+
+docker-build: ## 构建容器镜像，可通过 DOCKER_IMAGE 指定名称和版本
+	docker build --tag $(DOCKER_IMAGE) .
+
+docker-build-multi: ## 使用 Buildx 构建并推送 AMD64/ARM64 多平台镜像
+	docker buildx build --platform $(DOCKER_PLATFORMS) --tag $(DOCKER_IMAGE) --push .
 
 run: ## 使用项目根目录的 config.yaml 启动采集器
 	go run $(MAIN_PACKAGE) -config ./config.yaml

@@ -258,9 +258,87 @@ make build            # 构建当前平台二进制
 make build-linux      # 构建 Linux AMD64 和 ARM64
 make build-linux-amd64 # 仅构建 Linux AMD64
 make build-linux-arm64 # 仅构建 Linux ARM64
+make docker-build     # 构建容器镜像
+make docker-build-multi # 构建并推送 AMD64/ARM64 多平台镜像
 make run              # 使用 config.yaml 启动
 make clean            # 删除 dist 目录
 ```
+
+## Docker 镜像
+
+项目使用多阶段构建和 distroless 运行镜像，最终镜像只包含静态链接的可执行文件与 Apache-2.0 协议文件：
+
+```bash
+make docker-build DOCKER_IMAGE=ghcr.io/ha1377311454/log-collector:v0.1.0
+docker push ghcr.io/ha1377311454/log-collector:v0.1.0
+```
+
+使用 Docker Buildx 交叉构建并推送包含 `linux/amd64`、`linux/arm64` 的多平台镜像：
+
+```bash
+docker buildx create --name log-collector-builder --use  # 首次执行一次
+make docker-build-multi \
+  DOCKER_IMAGE=ghcr.io/ha1377311454/log-collector:v0.2.0
+```
+
+`docker-build-multi` 使用 `--push` 直接推送 OCI Manifest，因为 Docker 本地镜像存储不能通过 `--load` 同时载入多个平台。可通过 `DOCKER_PLATFORMS` 覆盖目标平台：
+
+```bash
+make docker-build-multi \
+  DOCKER_IMAGE=registry.example.com/log-collector:v0.2.0 \
+  DOCKER_PLATFORMS=linux/amd64,linux/arm64
+```
+
+推送版本 Tag 后，GitHub Release 工作流还会自动将同一份多平台镜像发布为：
+
+```text
+ghcr.io/ha1377311454/log-collector:v0.2.0
+ghcr.io/ha1377311454/log-collector:latest
+```
+
+可以检查远程 Manifest 中的平台：
+
+```bash
+docker buildx imagetools inspect ghcr.io/ha1377311454/log-collector:v0.2.0
+```
+
+本地运行时需要挂载配置和位点目录：
+
+```bash
+docker run --rm \
+  -v "$PWD/config.yaml:/etc/log-collector/config.yaml:ro" \
+  -v "$PWD/data:/var/lib/log-collector" \
+  -v /var/log:/var/log:ro \
+  log-collector:latest
+```
+
+镜像默认以非 root 用户运行。若宿主机日志权限不允许该用户读取，应优先通过文件用户组或 ACL 授权；不要直接使用特权容器。
+
+## Kubernetes 部署
+
+`deploy/kubernetes/log-collector.yaml` 提供 DaemonSet 部署示例，每个节点运行一个采集器，并完成以下挂载：
+
+- 宿主机 `/var/log` 只读挂载，用于读取 Kubernetes CRI 容器日志。
+- 宿主机 `/var/lib/log-collector` 读写挂载，用于按节点持久化读取位点。
+- ConfigMap 挂载到 `/etc/log-collector`，提供采集配置。
+
+DaemonSet 需要读取节点日志并写入由 `hostPath` 创建的位点目录，因此示例以 UID 0 运行，但关闭权限提升、删除全部 Linux capabilities、使用只读根文件系统，并且没有启用 `privileged`。
+
+部署前修改清单中的镜像版本和 `export.endpoint`，然后执行：
+
+```bash
+kubectl apply -f deploy/kubernetes/log-collector.yaml
+kubectl -n observability rollout status daemonset/log-collector
+kubectl -n observability logs -l app.kubernetes.io/name=log-collector --tail=100
+```
+
+更新 ConfigMap 后，Kubernetes 使用符号链接切换挂载内容，当前配置监听器不会将该事件识别为普通文件写入。请显式滚动重启使配置生效：
+
+```bash
+kubectl -n observability rollout restart daemonset/log-collector
+```
+
+如需采集宿主机上的其他文件目录，可按 `/var/log` 的方式增加 `hostPath` 和 `volumeMount`，并在 `sources.files` 中配置容器内的对应绝对路径。
 
 ## GoReleaser
 

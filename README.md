@@ -107,6 +107,18 @@ CRI 的 `P`（partial）记录会保留为独立的 OTLP LogRecord，并通过 `
 
 未遇到下一条记录时，`flush_after` 到期会输出缓冲内容，默认值为 5 秒。
 
+### 日志属性抽取
+
+进程、文件和容器规则都可以配置 `attribute_extractors`。每个抽取器需要指定 OTLP LogRecord 属性名和正则表达式，正则的第一个捕获组作为属性值；没有匹配时不会生成该属性：
+
+```yaml
+attribute_extractors:
+  - key: request.id
+    pattern: '\b(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s+-\s+(\S+)\s+-'
+```
+
+例如日志片段 `DEBUG - qzJFsZlazjUljpmV -` 会生成 `request.id=qzJFsZlazjUljpmV`。抽取在多行合并完成后执行，因此正则可以匹配完整日志正文。
+
 ## OTLP 输出
 
 采集器会从每条日志的首行识别 `TRACE`、`DEBUG`、`INFO`、`NOTICE`、`WARN/WARNING`、`ERROR/ERR`、`FATAL/CRITICAL/CRIT/ALERT/EMERG/PANIC`。级别会归一化为 `TRACE`、`DEBUG`、`INFO`、`WARN`、`ERROR` 或 `FATAL`，并同时写入 OTLP 标准严重性字段和 `log.level` 属性；未识别到级别时保持 OTLP 严重性未指定。多行日志仅以首行为准。

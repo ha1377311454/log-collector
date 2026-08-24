@@ -2,6 +2,7 @@ package tailer
 
 import (
 	"bufio"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -84,5 +85,22 @@ func TestPreparedRecordAddsLogLevelAttribute(t *testing.T) {
 	record := preparedRecord(model.FileTarget{Path: "/tmp/app.log", SourceType: "file", Rule: "app"}, "[DEBUG] detail", time.Time{}, nil)
 	if record.SeverityText != "DEBUG" || record.SeverityNumber != 5 || record.Attributes["log.level"] != "DEBUG" {
 		t.Fatalf("unexpected severity record: %+v", record)
+	}
+}
+
+func TestPreparedRecordExtractsConfiguredAttribute(t *testing.T) {
+	target := model.FileTarget{
+		Path:       "/tmp/app.log",
+		SourceType: "file",
+		Rule:       "app",
+		Extractors: []model.AttributeExtractor{{
+			Key:     "request.id",
+			Pattern: regexp.MustCompile(`\b(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s+-\s+(\S+)\s+-`),
+		}},
+	}
+	body := "10:14:58.604 - demo M:acceptInterval L:34- T:[worker] DEBUG - qzJFsZlazjUljpmV - [acceptInterval]"
+	record := preparedRecord(target, body, time.Time{}, nil)
+	if record.Attributes["request.id"] != "qzJFsZlazjUljpmV" {
+		t.Fatalf("request.id = %q", record.Attributes["request.id"])
 	}
 }

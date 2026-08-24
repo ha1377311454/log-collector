@@ -21,14 +21,20 @@ import (
 type compiledProcessRule struct {
 	rule                            config.ProcessRule
 	comm, cmdline, include, exclude *regexp.Regexp
+	extractors                      []model.AttributeExtractor
+}
+
+type compiledFileRule struct {
+	rule       config.FileRule
+	extractors []model.AttributeExtractor
 }
 
 // Discovery 使用 gopsutil 获取进程快照，并结合文件 glob 发现日志源。
 // 所有正则只在初始化时编译一次，发现热路径不再重复编译。
 type Discovery struct {
 	processRules []compiledProcessRule
-	files        []config.FileRule
-	containers   []config.FileRule
+	files        []compiledFileRule
+	containers   []compiledFileRule
 	cacheTTL     time.Duration
 	log          *logging.Logger
 	mu           sync.Mutex
@@ -36,7 +42,7 @@ type Discovery struct {
 }
 
 func New(cfg config.SourcesConfig, cacheTTL time.Duration, logger *logging.Logger) (*Discovery, error) {
-	d := &Discovery{files: cfg.Files, containers: cfg.Containers, cacheTTL: cacheTTL, log: logger, seen: make(map[string]time.Time)}
+	d := &Discovery{cacheTTL: cacheTTL, log: logger, seen: make(map[string]time.Time)}
 	for _, rule := range cfg.Processes {
 		compiled := compiledProcessRule{rule: rule}
 		var err error
@@ -52,7 +58,24 @@ func New(cfg config.SourcesConfig, cacheTTL time.Duration, logger *logging.Logge
 		if compiled.exclude, err = optionalRegexp(rule.ExcludeRegex); err != nil {
 			return nil, err
 		}
+		if compiled.extractors, err = compileExtractors(rule.Extractors); err != nil {
+			return nil, err
+		}
 		d.processRules = append(d.processRules, compiled)
+	}
+	for _, rule := range cfg.Files {
+		extractors, err := compileExtractors(rule.Extractors)
+		if err != nil {
+			return nil, err
+		}
+		d.files = append(d.files, compiledFileRule{rule: rule, extractors: extractors})
+	}
+	for _, rule := range cfg.Containers {
+		extractors, err := compileExtractors(rule.Extractors)
+		if err != nil {
+			return nil, err
+		}
+		d.containers = append(d.containers, compiledFileRule{rule: rule, extractors: extractors})
 	}
 	return d, nil
 }
@@ -134,7 +157,7 @@ func (d *Discovery) discoverProcess(ctx context.Context, p *process.Process) ([]
 			attrs["process.pid"] = fmt.Sprintf("%d", p.Pid)
 			attrs["process.name"] = comm
 			attrs["process.command_line"] = cmdline
-			out = append(out, model.FileTarget{Path: path, SourceType: "process", Rule: rule.rule.Name, StartAt: startAt(rule.rule.StartAt), Multiline: multiline(rule.rule.Multiline), Attributes: attrs})
+			out = append(out, model.FileTarget{Path: path, SourceType: "process", Rule: rule.rule.Name, StartAt: startAt(rule.rule.StartAt), Multiline: multiline(rule.rule.Multiline), Attributes: attrs, Extractors: rule.extractors})
 			count++
 			if rule.rule.MaxFiles > 0 && count >= rule.rule.MaxFiles {
 				break
@@ -194,7 +217,8 @@ func prepareResource(target *model.FileTarget) {
 	target.ResourceKey = key.String()
 }
 
-func discoverFiles(rule config.FileRule, sourceType string) []model.FileTarget {
+func discoverFiles(compiled compiledFileRule, sourceType string) []model.FileTarget {
+	rule := compiled.rule
 	excluded := make(map[string]struct{})
 	for _, pattern := range rule.Exclude {
 		matches, _ := filepath.Glob(pattern)
@@ -216,10 +240,22 @@ func discoverFiles(rule config.FileRule, sourceType string) []model.FileTarget {
 			if sourceType == "container" {
 				addContainerAttributes(attrs, path)
 			}
-			out = append(out, model.FileTarget{Path: path, SourceType: sourceType, Rule: rule.Name, StartAt: startAt(rule.StartAt), Format: rule.Format, Multiline: multiline(rule.Multiline), Attributes: attrs})
+			out = append(out, model.FileTarget{Path: path, SourceType: sourceType, Rule: rule.Name, StartAt: startAt(rule.StartAt), Format: rule.Format, Multiline: multiline(rule.Multiline), Attributes: attrs, Extractors: compiled.extractors})
 		}
 	}
 	return out
+}
+
+func compileExtractors(values []config.AttributeExtractorConfig) ([]model.AttributeExtractor, error) {
+	out := make([]model.AttributeExtractor, 0, len(values))
+	for _, value := range values {
+		pattern, err := regexp.Compile(value.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("compile attribute extractor %q: %w", value.Key, err)
+		}
+		out = append(out, model.AttributeExtractor{Key: value.Key, Pattern: pattern})
+	}
+	return out, nil
 }
 
 func addContainerAttributes(attrs map[string]string, path string) {

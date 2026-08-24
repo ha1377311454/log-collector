@@ -42,3 +42,12 @@ func TestLoadRejectsUnknownYAMLField(t *testing.T) {
 		t.Fatal("unknown YAML field must be rejected")
 	}
 }
+
+func TestRejectsAttributeExtractorWithoutCaptureGroup(t *testing.T) {
+	cfg := defaults()
+	cfg.Export.Endpoint = "http://localhost:4318"
+	cfg.Sources.Files = []FileRule{{Name: "x", Include: []string{"*.log"}, Extractors: []AttributeExtractorConfig{{Key: "request.id", Pattern: `request_id=\S+`}}}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}

@@ -70,26 +70,34 @@ type SourcesConfig struct {
 // ProcessRule 定义“通过 gopsutil 匹配进程，再从进程打开文件中发现日志”的规则。
 // CommRegex 与 CmdlineRegex 同时配置时采用 AND 关系。
 type ProcessRule struct {
-	Name         string            `yaml:"name"`
-	CommRegex    string            `yaml:"comm_regex"`
-	CmdlineRegex string            `yaml:"cmdline_regex"`
-	IncludeRegex string            `yaml:"include_regex"`
-	ExcludeRegex string            `yaml:"exclude_regex"`
-	MaxFiles     int               `yaml:"max_files"`
-	StartAt      string            `yaml:"start_at"`
-	Multiline    MultilineConfig   `yaml:"multiline"`
-	Attributes   map[string]string `yaml:"attributes"`
+	Name         string                     `yaml:"name"`
+	CommRegex    string                     `yaml:"comm_regex"`
+	CmdlineRegex string                     `yaml:"cmdline_regex"`
+	IncludeRegex string                     `yaml:"include_regex"`
+	ExcludeRegex string                     `yaml:"exclude_regex"`
+	MaxFiles     int                        `yaml:"max_files"`
+	StartAt      string                     `yaml:"start_at"`
+	Multiline    MultilineConfig            `yaml:"multiline"`
+	Attributes   map[string]string          `yaml:"attributes"`
+	Extractors   []AttributeExtractorConfig `yaml:"attribute_extractors"`
 }
 
 // FileRule 定义基于文件 glob 的日志源，同时用于普通文件和容器标准输出。
 type FileRule struct {
-	Name       string            `yaml:"name"`
-	Include    []string          `yaml:"include"`
-	Exclude    []string          `yaml:"exclude"`
-	StartAt    string            `yaml:"start_at"`
-	Format     string            `yaml:"format"`
-	Multiline  MultilineConfig   `yaml:"multiline"`
-	Attributes map[string]string `yaml:"attributes"`
+	Name       string                     `yaml:"name"`
+	Include    []string                   `yaml:"include"`
+	Exclude    []string                   `yaml:"exclude"`
+	StartAt    string                     `yaml:"start_at"`
+	Format     string                     `yaml:"format"`
+	Multiline  MultilineConfig            `yaml:"multiline"`
+	Attributes map[string]string          `yaml:"attributes"`
+	Extractors []AttributeExtractorConfig `yaml:"attribute_extractors"`
+}
+
+// AttributeExtractorConfig 使用正则表达式的第一个捕获组生成日志记录属性。
+type AttributeExtractorConfig struct {
+	Key     string `yaml:"key"`
+	Pattern string `yaml:"pattern"`
 }
 
 // MultilineConfig 定义多行合并规则。
@@ -228,6 +236,9 @@ func (c Config) Validate() error {
 				}
 			}
 		}
+		if err := validateAttributeExtractors(r.Extractors); err != nil {
+			return fmt.Errorf("process rule %q: %w", r.Name, err)
+		}
 	}
 	for _, group := range [][]FileRule{c.Sources.Files, c.Sources.Containers} {
 		for _, r := range group {
@@ -250,6 +261,30 @@ func (c Config) Validate() error {
 					}
 				}
 			}
+			if err := validateAttributeExtractors(r.Extractors); err != nil {
+				return fmt.Errorf("file rule %q: %w", r.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateAttributeExtractors(extractors []AttributeExtractorConfig) error {
+	keys := make(map[string]struct{}, len(extractors))
+	for _, extractor := range extractors {
+		if extractor.Key == "" || extractor.Pattern == "" {
+			return errors.New("attribute extractor key and pattern are required")
+		}
+		if _, exists := keys[extractor.Key]; exists {
+			return fmt.Errorf("duplicate attribute extractor key %q", extractor.Key)
+		}
+		keys[extractor.Key] = struct{}{}
+		compiled, err := regexp.Compile(extractor.Pattern)
+		if err != nil {
+			return fmt.Errorf("attribute extractor %q has invalid pattern: %w", extractor.Key, err)
+		}
+		if compiled.NumSubexp() < 1 {
+			return fmt.Errorf("attribute extractor %q pattern must contain a capture group", extractor.Key)
 		}
 	}
 	return nil

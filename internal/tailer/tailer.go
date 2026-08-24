@@ -320,11 +320,19 @@ func preparedRecord(target model.FileTarget, body string, timestamp time.Time, a
 		target.ResourceAttributes = resource
 	}
 	severityText, severityNumber := parseSeverity(body)
-	if severityText != "" {
+	if severityText != "" || len(target.Extractors) > 0 {
 		if attrs == nil {
-			attrs = make(map[string]string, 1)
+			attrs = make(map[string]string, len(target.Extractors)+1)
 		}
+	}
+	if severityText != "" {
 		attrs["log.level"] = severityText
+	}
+	for _, extractor := range target.Extractors {
+		match := extractor.Pattern.FindStringSubmatch(body)
+		if len(match) > 1 && match[1] != "" {
+			attrs[extractor.Key] = match[1]
+		}
 	}
 	return model.Record{Body: body, Timestamp: timestamp, SeverityText: severityText, SeverityNumber: severityNumber, Attributes: attrs, ResourceAttributes: target.ResourceAttributes, ResourceKey: target.ResourceKey}
 }

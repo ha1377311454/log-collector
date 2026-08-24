@@ -77,6 +77,10 @@ sources:
         continuation_pattern: '^[^(\d{4}\-\d{2}\-\d{2}\s\d{2}:\d{2}:\d{2})]|^(\s+|\})'
         # 最后一条多行日志长时间没有新行时，等待多久后强制输出；默认 5s。
         flush_after: 3s
+      # 从完整日志正文抽取 OTLP LogRecord 属性；第一个捕获组作为属性值。
+      attribute_extractors:
+        - key: request.id
+          pattern: '\b(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s+-\s+(\S+)\s+-'
       # 自定义 OTLP Resource 属性。程序会额外补充 process.pid/name/command_line。
       attributes:
         service.namespace: business
@@ -103,6 +107,9 @@ sources:
         # 匹配表示当前行属于上一条 Java 日志。
         continuation_pattern: '^[^(\d{4}\-\d{2}\-\d{2}\s\d{2}:\d{2}:\d{2})]|^(\s+|\})'
         flush_after: 3s
+      attribute_extractors:
+        - key: request.id
+          pattern: '\b(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s+-\s+(\S+)\s+-'
 
   # 容器标准输出规则。Kubernetes 部署时需要只读挂载宿主机 /var/log/containers。
   containers:

@@ -27,3 +27,26 @@ func TestLoggerWritesJSONFile(t *testing.T) {
 		t.Fatalf("unexpected log: %s", b)
 	}
 }
+
+func TestLoggerSetLevelTakesEffectWithoutRebuild(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "collector.log")
+	logger, err := New(config.LogConfig{Level: "info", Format: "json", File: path, MaxSizeMB: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger.Debug("before reload")
+	if err := logger.SetLevel("debug"); err != nil {
+		t.Fatal(err)
+	}
+	logger.Debug("after reload")
+	if err := logger.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "before reload") || !strings.Contains(string(b), "after reload") {
+		t.Fatalf("unexpected log after level reload: %s", b)
+	}
+}

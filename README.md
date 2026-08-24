@@ -195,6 +195,42 @@ wechat_webhook:
 
 OTLP 和企业微信可以同时开启，也可以只开启其中一个；两者同时关闭会导致启动配置校验失败。两者同时开启时，Webhook 暂时失败不会阻断 OTLP 输出；仅启用 Webhook 时，推送失败会返回错误，避免日志在没有任何成功输出的情况下继续推进位点。
 
+## 配置热加载
+
+采集器使用 `fsnotify` 监听配置文件所在目录，并对文件保存事件进行 300ms 防抖。修改配置文件后无需重启即可生效的配置包括：
+
+- `log.level`
+- `wechat_webhook` 下的全部配置，包括开关、地址、标题、超时、内容长度、忽略关键词和错误类型关键词
+
+| 配置项 | 是否热加载 | 生效方式 |
+| --- | --- | --- |
+| `log.level` | 是 | 通过 zap `AtomicLevel` 原子更新 |
+| `wechat_webhook.enabled` | 是 | 启用或关闭后续 Webhook 推送 |
+| `wechat_webhook.url` | 是 | 新建 Webhook Client 后原子替换 |
+| `wechat_webhook.title` | 是 | 后续通知使用新标题 |
+| `wechat_webhook.timeout` | 是 | 新建 HTTP Client 后生效 |
+| `wechat_webhook.max_content_length` | 是 | 后续通知使用新的内容限制 |
+| `wechat_webhook.ignore_keywords` | 是 | 后续日志使用新忽略列表 |
+| `wechat_webhook.error_type_keywords` | 是 | 后续通知使用新错误类型列表 |
+| `log` 中除 `level` 外的配置 | 否 | 修改后需要重启 |
+| `state`、`sources`、`export` | 否 | 修改后需要重启 |
+| `performance`、`flow_control` | 否 | 修改后需要重启 |
+
+配置文件内也使用 `[支持热加载]` 和 `[整个区块支持热加载]` 注释标记了对应配置。
+
+热加载时先重新读取并完整校验 YAML，再构造新的 Webhook Client，最后通过原子指针整体替换。配置非法或新 Client 创建失败时继续使用旧配置。Webhook URL 不会输出到热加载日志。
+
+以下配置发生变化时会输出 `configuration changes require restart` 警告，但不会修改当前运行状态：
+
+- `log` 中除 `level` 外的文件、格式和滚动参数
+- `state`
+- `sources`
+- `export`
+- `performance`
+- `flow_control`
+
+热加载成功时，自身日志会输出 `configuration hot reload applied` 及当前日志级别、Webhook 开关和关键词数量。
+
 ## 验证命令
 
 ```bash

@@ -1,6 +1,6 @@
 # log-collector 自身运行日志配置，不影响采集到的业务日志。
 log:
-  # 可选值：debug、info、warn、error；默认 info。
+  # [支持热加载] 可选值：debug、info、warn、error；默认 info。
   level: info
   # json 适合生产采集，console 适合本地阅读。
   format: json
@@ -163,7 +163,8 @@ export:
     # 单个批次允许重试的总时长；0 表示不限制。
     max_elapsed_time: 5m
 
-# 企业微信群机器人 Webhook，只推送 ERROR 和 FATAL 日志。
+# [整个区块支持热加载] 企业微信群机器人 Webhook，只推送 ERROR 和 FATAL 日志。
+# 修改 enabled、title、ignore_keywords、error_type_keywords、url、timeout、max_content_length 后无需重启。
 wechat_webhook:
   enabled: false
   # Markdown 消息顶部标题。

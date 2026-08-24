@@ -16,6 +16,7 @@ import (
 type Logger struct {
 	base   *zap.Logger
 	roller *lumberjack.Logger
+	level  zap.AtomicLevel
 }
 
 // New 创建结构化日志器；lumberjack 负责按大小滚动、保留和压缩历史文件。
@@ -50,12 +51,23 @@ func New(cfg config.LogConfig) (*Logger, error) {
 	if len(sinks) == 0 {
 		return nil, errors.New("no log output configured")
 	}
-	logger.base = zap.New(zapcore.NewCore(encoder, zapcore.NewMultiWriteSyncer(sinks...), level), zap.AddCaller(), zap.AddCallerSkip(1))
+	logger.level = zap.NewAtomicLevelAt(level)
+	logger.base = zap.New(zapcore.NewCore(encoder, zapcore.NewMultiWriteSyncer(sinks...), logger.level), zap.AddCaller(), zap.AddCallerSkip(1))
 	return logger, nil
 }
 
 // Nop 返回无输出日志器，供测试使用。
-func Nop() *Logger { return &Logger{base: zap.NewNop()} }
+func Nop() *Logger { return &Logger{base: zap.NewNop(), level: zap.NewAtomicLevel()} }
+
+// SetLevel 原子更新运行日志级别，已经创建的 Logger 无需重建。
+func (l *Logger) SetLevel(value string) error {
+	var level zapcore.Level
+	if err := level.Set(value); err != nil {
+		return err
+	}
+	l.level.SetLevel(level)
+	return nil
+}
 
 func (l *Logger) Debug(message string, args ...any) { l.base.Debug(message, fields(args)...) }
 func (l *Logger) Info(message string, args ...any)  { l.base.Info(message, fields(args)...) }

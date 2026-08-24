@@ -3,6 +3,7 @@ module log-collector
 go 1.25.0
 
 require (
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/shirou/gopsutil/v4 v4.26.7
 	go.opentelemetry.io/proto/otlp v1.7.1
 	go.uber.org/zap v1.28.0

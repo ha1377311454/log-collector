@@ -33,7 +33,7 @@ func main() {
 	// SIGINT/SIGTERM 会触发 Tailer 保存位点并让 Exporter 排空队列。
 	defer stop()
 
-	if err := app.Run(ctx, cfg, logger); err != nil {
+	if err := app.Run(ctx, cfg, *configPath, logger); err != nil {
 		logger.Error("collector stopped", "error", err)
 		os.Exit(1)
 	}

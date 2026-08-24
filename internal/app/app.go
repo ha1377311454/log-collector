@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"log-collector/internal/config"
@@ -12,6 +14,7 @@ import (
 	"log-collector/internal/flowcontrol"
 	"log-collector/internal/logging"
 	"log-collector/internal/model"
+	"log-collector/internal/reload"
 	"log-collector/internal/state"
 	"log-collector/internal/tailer"
 	"log-collector/internal/webhook"
@@ -34,7 +37,7 @@ func (s *targetStore) Get() []model.FileTarget {
 }
 
 // Run 将发现、读取、位点保存拆成三个独立周期，慢读取不会推迟下一次进程发现。
-func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
+func Run(ctx context.Context, cfg config.Config, configPath string, logger *logging.Logger) error {
 	store, err := state.Load(cfg.State.Path)
 	if err != nil {
 		return err
@@ -46,19 +49,20 @@ func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
 			return err
 		}
 	}
-	var hook *webhook.Client
+	var hookRef atomic.Pointer[webhook.Client]
 	if cfg.Webhook.Enabled {
-		hook, err = webhook.New(cfg.Webhook, logger)
+		hook, err := webhook.New(cfg.Webhook, logger)
 		if err != nil {
 			return err
 		}
+		hookRef.Store(hook)
 	}
 	disc, err := discovery.New(cfg.Sources, cfg.Performance.CacheTTL.Duration, logger)
 	if err != nil {
 		return err
 	}
 	submit := func(ctx context.Context, record model.Record) error {
-		if hook != nil {
+		if hook := hookRef.Load(); hook != nil {
 			if err := hook.Send(ctx, record); err != nil {
 				if exp == nil {
 					return err
@@ -74,6 +78,52 @@ func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
 	}
 	limiter := flowcontrol.New(cfg.FlowControl, logger, submit)
 	tail := tailer.New(store, cfg.Performance, logger, limiter.Submit)
+	activeCfg := cfg
+	reloadConfig := func() {
+		next, err := config.Load(configPath)
+		if err != nil {
+			logger.Warn("configuration hot reload rejected", "error", err)
+			return
+		}
+		restartChanges := restartRequiredChanges(activeCfg, next)
+		webhookChanged := !reflect.DeepEqual(activeCfg.Webhook, next.Webhook)
+		levelChanged := activeCfg.Log.Level != next.Log.Level
+		var nextHook *webhook.Client
+		if webhookChanged && next.Webhook.Enabled {
+			nextHook, err = webhook.New(next.Webhook, logger)
+			if err != nil {
+				logger.Warn("configuration hot reload rejected", "error", err)
+				return
+			}
+		}
+		if levelChanged {
+			if err := logger.SetLevel(next.Log.Level); err != nil {
+				logger.Warn("configuration hot reload rejected", "error", err)
+				return
+			}
+		}
+		if webhookChanged {
+			hookRef.Store(nextHook)
+		}
+		activeCfg.Webhook = next.Webhook
+		activeCfg.Log.Level = next.Log.Level
+		if webhookChanged || levelChanged {
+			logger.Info("configuration hot reload applied",
+				"log_level", next.Log.Level,
+				"wechat_webhook_enabled", next.Webhook.Enabled,
+				"ignore_keyword_count", len(next.Webhook.IgnoreKeywords),
+				"error_type_keyword_count", len(next.Webhook.ErrorTypeKeywords),
+			)
+		}
+		if len(restartChanges) > 0 {
+			logger.Warn("configuration changes require restart", "sections", restartChanges)
+		}
+	}
+	configWatcher, err := reload.New(configPath, logger, reloadConfig)
+	if err != nil {
+		return err
+	}
+	defer configWatcher.Close()
 
 	loopCtx, stopLoops := context.WithCancel(context.Background())
 	exportCtx, stopExporter := context.WithCancel(context.Background())
@@ -93,6 +143,16 @@ func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
 	targets.Set(initial)
 	errCh := make(chan error, 3)
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := configWatcher.Run(loopCtx); err != nil {
+			select {
+			case errCh <- err:
+			default:
+			}
+		}
+	}()
 	startLoop := func(interval time.Duration, action func() error) {
 		wg.Add(1)
 		go func() {
@@ -167,4 +227,27 @@ func Run(ctx context.Context, cfg config.Config, logger *logging.Logger) error {
 		}
 		return err
 	}
+}
+
+func restartRequiredChanges(active, next config.Config) []string {
+	var changes []string
+	activeLog, nextLog := active.Log, next.Log
+	activeLog.Level, nextLog.Level = "", ""
+	for _, section := range []struct {
+		name   string
+		active any
+		next   any
+	}{
+		{name: "log except level", active: activeLog, next: nextLog},
+		{name: "state", active: active.State, next: next.State},
+		{name: "sources", active: active.Sources, next: next.Sources},
+		{name: "export", active: active.Export, next: next.Export},
+		{name: "performance", active: active.Performance, next: next.Performance},
+		{name: "flow_control", active: active.FlowControl, next: next.FlowControl},
+	} {
+		if !reflect.DeepEqual(section.active, section.next) {
+			changes = append(changes, section.name)
+		}
+	}
+	return changes
 }

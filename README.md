@@ -270,11 +270,25 @@ make release-snapshot  # 本地快照打包，不发布
 make release-local     # 正式格式打包，但跳过远程发布
 ```
 
-创建并推送语义化版本 tag 后，可执行正式发布：
+### GitHub 自动发布
+
+代码合并到 GitHub 后，创建并推送以 `v` 开头的版本 Tag，即可触发 `.github/workflows/release.yml`：
 
 ```bash
-export GITHUB_TOKEN="<你的Token>"
 git tag -a v0.1.0 -m "release v0.1.0"
 git push origin v0.1.0
+```
+
+工作流会依次执行依赖校验、单元测试和静态检查，然后通过 GoReleaser 构建以下制品并上传到对应的 GitHub Release：
+
+- `log-collector_<版本>_linux_amd64.tar.gz`
+- `log-collector_<版本>_linux_arm64.tar.gz`
+- `checksums.txt`
+
+也可以在 GitHub 仓库的 `Actions -> Release -> Run workflow` 中手动执行，输入一个已经存在的版本 Tag。工作流使用 GitHub 自动提供的 `GITHUB_TOKEN`，不需要额外配置 Personal Access Token。
+
+如需在本地发布，仍可自行设置 `GITHUB_TOKEN` 后执行：
+
+```bash
 goreleaser release --clean
 ```

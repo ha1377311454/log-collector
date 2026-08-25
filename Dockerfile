@@ -15,7 +15,12 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/log-collector ./cmd/log-collector
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.22
+
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S nonroot \
+    && adduser -S -G nonroot nonroot
 
 LABEL org.opencontainers.image.title="log-collector" \
       org.opencontainers.image.description="YAML-driven log collector with OTLP/HTTP export" \

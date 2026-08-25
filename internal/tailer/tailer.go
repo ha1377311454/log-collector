@@ -316,7 +316,10 @@ func preparedRecord(target model.FileTarget, body string, timestamp time.Time, a
 		for key, value := range target.Attributes {
 			resource[key] = value
 		}
-		resource["log.file.path"] = target.Path
+		resource["log.file.path"] = target.ReportedPath
+		if resource["log.file.path"] == "" {
+			resource["log.file.path"] = target.Path
+		}
 		resource["log.source.type"] = target.SourceType
 		resource["log.source.rule"] = target.Rule
 		target.ResourceAttributes = resource

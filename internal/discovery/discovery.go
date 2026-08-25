@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -153,14 +154,15 @@ func (d *Discovery) discoverProcess(ctx context.Context, p *process.Process) ([]
 			if !filepath.IsAbs(path) || !rule.include.MatchString(path) || (rule.exclude != nil && rule.exclude.MatchString(path)) {
 				continue
 			}
-			if info, statErr := os.Stat(path); statErr != nil || !info.Mode().IsRegular() {
+			sourcePath, ok := resolveProcessFile("/proc", p.Pid, path)
+			if !ok {
 				continue
 			}
 			attrs := clone(rule.rule.Attributes)
 			attrs["process.pid"] = fmt.Sprintf("%d", p.Pid)
 			attrs["process.name"] = comm
 			attrs["process.command_line"] = cmdline
-			out = append(out, model.FileTarget{Path: path, SourceType: "process", Rule: rule.rule.Name, StartAt: startAt(rule.rule.StartAt), Multiline: multiline(rule.rule.Multiline), Attributes: attrs, Extractors: rule.extractors, DropLevels: rule.dropLevels})
+			out = append(out, model.FileTarget{Path: sourcePath, ReportedPath: path, SourceType: "process", Rule: rule.rule.Name, StartAt: startAt(rule.rule.StartAt), Multiline: multiline(rule.rule.Multiline), Attributes: attrs, Extractors: rule.extractors, DropLevels: rule.dropLevels})
 			count++
 			if rule.rule.MaxFiles > 0 && count >= rule.rule.MaxFiles {
 				break
@@ -168,6 +170,18 @@ func (d *Discovery) discoverProcess(ctx context.Context, p *process.Process) ([]
 		}
 	}
 	return out, nil
+}
+
+// resolveProcessFile 优先通过目标进程的 root 解析其挂载命名空间内路径。
+// 直接路径用于宿主机普通进程以及未隔离挂载命名空间的兼容回退。
+func resolveProcessFile(procRoot string, pid int32, openedPath string) (string, bool) {
+	processRootPath := filepath.Join(procRoot, strconv.Itoa(int(pid)), "root", strings.TrimPrefix(openedPath, string(filepath.Separator)))
+	for _, candidate := range []string{processRootPath, openedPath} {
+		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func (d *Discovery) deduplicate(targets []model.FileTarget) []model.FileTarget {
@@ -184,7 +198,7 @@ func (d *Discovery) deduplicate(targets []model.FileTarget) []model.FileTarget {
 		prepareResource(&target)
 		unique = append(unique, target)
 		if _, ok := d.seen[target.Path]; !ok {
-			d.log.Info("discovered log file", "source", target.SourceType, "rule", target.Rule, "path", target.Path)
+			d.log.Info("discovered log file", "source", target.SourceType, "rule", target.Rule, "path", reportedPath(target), "source_path", target.Path)
 		}
 		d.seen[target.Path] = now
 	}
@@ -201,7 +215,7 @@ func prepareResource(target *model.FileTarget) {
 	for k, v := range target.Attributes {
 		resource[k] = v
 	}
-	resource["log.file.path"] = target.Path
+	resource["log.file.path"] = reportedPath(*target)
 	resource["log.source.type"] = target.SourceType
 	resource["log.source.rule"] = target.Rule
 	target.ResourceAttributes = resource
@@ -218,6 +232,13 @@ func prepareResource(target *model.FileTarget) {
 		key.WriteByte(0)
 	}
 	target.ResourceKey = key.String()
+}
+
+func reportedPath(target model.FileTarget) string {
+	if target.ReportedPath != "" {
+		return target.ReportedPath
+	}
+	return target.Path
 }
 
 func discoverFiles(compiled compiledFileRule, sourceType string) []model.FileTarget {

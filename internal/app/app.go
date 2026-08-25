@@ -36,6 +36,23 @@ func (s *targetStore) Get() []model.FileTarget {
 	return append([]model.FileTarget(nil), s.targets...)
 }
 
+type recordSubmitter func(context.Context, model.Record) error
+
+// submitRecord 将所有外部输出视为尽力而为；输出失败不能阻断日志采集。
+func submitRecord(ctx context.Context, record model.Record, logger *logging.Logger, sendWebhook, sendExport recordSubmitter) error {
+	if sendWebhook != nil {
+		if err := sendWebhook(ctx, record); err != nil {
+			logger.Warn("send error log to WeChat webhook", "error", err)
+		}
+	}
+	if sendExport != nil {
+		if err := sendExport(ctx, record); err != nil {
+			logger.Warn("enqueue log for OTLP export", "error", err)
+		}
+	}
+	return nil
+}
+
 // Run 将发现、读取、位点保存拆成三个独立周期，慢读取不会推迟下一次进程发现。
 func Run(ctx context.Context, cfg config.Config, configPath string, logger *logging.Logger) error {
 	store, err := state.Load(cfg.State.Path)
@@ -49,6 +66,8 @@ func Run(ctx context.Context, cfg config.Config, configPath string, logger *logg
 			return err
 		}
 	}
+	var expRef atomic.Pointer[exporter.Exporter]
+	expRef.Store(exp)
 	var hookRef atomic.Pointer[webhook.Client]
 	if cfg.Webhook.Enabled {
 		hook, err := webhook.New(cfg.Webhook, logger)
@@ -61,20 +80,26 @@ func Run(ctx context.Context, cfg config.Config, configPath string, logger *logg
 	if err != nil {
 		return err
 	}
+	loopCtx, stopLoops := context.WithCancel(context.Background())
+	exportCtx, stopExporter := context.WithCancel(context.Background())
+	defer stopLoops()
+	defer stopExporter()
 	submit := func(ctx context.Context, record model.Record) error {
+		var sendWebhook recordSubmitter
 		if hook := hookRef.Load(); hook != nil {
-			if err := hook.Send(ctx, record); err != nil {
-				if exp == nil {
-					return err
-				}
-				// Webhook 告警故障不应阻断仍然可用的 OTLP 日志链路。
-				logger.Warn("send error log to WeChat webhook", "error", err)
+			sendWebhook = hook.Send
+		}
+		var sendExport recordSubmitter
+		if activeExp := expRef.Load(); activeExp != nil {
+			sendExport = func(ctx context.Context, record model.Record) error {
+				enqueueCtx, cancel := context.WithCancel(ctx)
+				stop := context.AfterFunc(exportCtx, cancel)
+				defer stop()
+				defer cancel()
+				return activeExp.Enqueue(enqueueCtx, record)
 			}
 		}
-		if exp != nil {
-			return exp.Enqueue(ctx, record)
-		}
-		return nil
+		return submitRecord(ctx, record, logger, sendWebhook, sendExport)
 	}
 	limiter := flowcontrol.New(cfg.FlowControl, logger, submit)
 	tail := tailer.New(store, cfg.Performance, logger, limiter.Submit)
@@ -125,14 +150,15 @@ func Run(ctx context.Context, cfg config.Config, configPath string, logger *logg
 	}
 	defer configWatcher.Close()
 
-	loopCtx, stopLoops := context.WithCancel(context.Background())
-	exportCtx, stopExporter := context.WithCancel(context.Background())
-	defer stopLoops()
-	defer stopExporter()
 	var exportErr chan error
 	if exp != nil {
 		exportErr = make(chan error, 1)
-		go func() { exportErr <- exp.Run(exportCtx) }()
+		go func() {
+			err := exp.Run(exportCtx)
+			// 解除所有可能阻塞在已停止 Exporter 队列上的 Enqueue 调用。
+			stopExporter()
+			exportErr <- err
+		}()
 	}
 
 	initial, discoverErr := disc.Discover(loopCtx)
@@ -203,29 +229,30 @@ func Run(ctx context.Context, cfg config.Config, configPath string, logger *logg
 		}
 		if exp != nil {
 			stopExporter()
-			if err := <-exportErr; err != nil && runErr == nil && !errors.Is(err, context.Canceled) {
-				runErr = err
+			if exportErr != nil {
+				if err := <-exportErr; err != nil && !errors.Is(err, context.Canceled) {
+					logger.Warn("OTLP exporter stopped during shutdown", "error", err)
+				}
 			}
 		}
 		return runErr
 	}
-	select {
-	case <-ctx.Done():
-		return shutdown(nil)
-	case err := <-errCh:
-		return shutdown(err)
-	case err := <-exportErr:
-		stopLoops()
-		wg.Wait()
-		// Exporter 已经停止，不能再 flush 多行缓冲，否则会永久阻塞在无人消费的队列；
-		// 但仍应保存已经成功进入下游的文件位点，缩小异常退出后的重复采集窗口。
-		if saveErr := store.Save(); saveErr != nil && err == nil {
-			err = saveErr
+	for {
+		select {
+		case <-ctx.Done():
+			return shutdown(nil)
+		case err := <-errCh:
+			return shutdown(err)
+		case err := <-exportErr:
+			// Run 返回后队列已无人消费，先禁用提交，避免采集线程在满队列上永久阻塞。
+			expRef.Store(nil)
+			exportErr = nil
+			if err != nil && !errors.Is(err, context.Canceled) {
+				logger.Warn("OTLP exporter stopped; continuing without OTLP export", "error", err)
+			} else {
+				logger.Warn("OTLP exporter stopped unexpectedly; continuing without OTLP export")
+			}
 		}
-		if err == nil {
-			return errors.New("exporter stopped unexpectedly")
-		}
-		return err
 	}
 }
 

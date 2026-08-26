@@ -31,6 +31,20 @@ data:
           attributes:
             deployment.environment: kubernetes
 
+      # 进程日志发现示例。启用时还需要同时启用下方 DaemonSet 中的 hostPID 和 SYS_PTRACE。
+      # processes:
+      #   - name: application
+      #     comm_regex: '^java$'
+      #     cmdline_regex: 'application-name'
+      #     include_regex: '^/data/tingyun/logs/[^/]+/application\.log$'
+      #     max_files: 20
+      #     start_at: end
+      #     multiline:
+      #       start_pattern: '^(?:(?:(?:\d{4}[-/])?\d{2}[-/]\d{2})[ T])?\d{2}:\d{2}:\d{2}(?:[.,]\d{3,9})?'
+      #       flush_after: 3s
+      #     attributes:
+      #       deployment.environment: kubernetes
+
     export:
       enabled: true
       # 修改为集群内实际的 OpenTelemetry Collector Service 地址。
@@ -69,6 +83,8 @@ spec:
       labels:
         app.kubernetes.io/name: log-collector
     spec:
+      # 进程发现需要查看节点上的业务进程；启用上方 sources.processes 时取消下一行注释。
+      # hostPID: true
       terminationGracePeriodSeconds: 30
       containers:
         - name: log-collector
@@ -86,6 +102,10 @@ spec:
             capabilities:
               drop:
                 - ALL
+              # sources.processes 需要读取目标进程的 /proc/<pid>/fd 和 /proc/<pid>/root。
+              # 启用进程发现时取消下面两行注释。
+              # add:
+              #   - SYS_PTRACE
           resources:
             requests:
               cpu: 50m
@@ -102,6 +122,13 @@ spec:
             - name: var-log
               mountPath: /var/log
               readOnly: true
+            # application-logs 是进程日志的可选直接路径回退示例。
+            # 采集器优先通过 /proc/<pid>/root 读取日志；仅使用 sources.processes、hostPID 和
+            # SYS_PTRACE 有效、能够稳定访问 /proc/<pid>/root，且没有 sources.files 依赖该目录时，
+            # 可以不配置此挂载。启用时需要同时取消下面三行和 volumes 中同名 volume 的注释。
+            # - name: application-logs
+            #   mountPath: /data/tingyun/logs
+            #   readOnly: true
       volumes:
         - name: config
           configMap:
@@ -114,3 +141,10 @@ spec:
           hostPath:
             path: /var/log
             type: Directory
+        # 将节点实际目录映射为业务进程 fd 中记录的 /data/tingyun/logs 路径。
+        # type: Directory 要求该目录预先存在，否则 Pod 无法创建。
+        # 必须与上方 application-logs volumeMount 同时启用或同时删除。
+        # - name: application-logs
+        #   hostPath:
+        #     path: /data/tingyun/tingyun/logs
+        #     type: Directory

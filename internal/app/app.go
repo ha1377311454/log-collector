@@ -136,6 +136,7 @@ func Run(ctx context.Context, cfg config.Config, configPath string, logger *logg
 			logger.Info("configuration hot reload applied",
 				"log_level", next.Log.Level,
 				"wechat_webhook_enabled", next.Webhook.Enabled,
+				"severity_level_count", len(next.Webhook.SeverityLevels),
 				"ignore_keyword_count", len(next.Webhook.IgnoreKeywords),
 				"error_type_keyword_count", len(next.Webhook.ErrorTypeKeywords),
 			)

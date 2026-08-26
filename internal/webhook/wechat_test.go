@@ -79,6 +79,28 @@ func TestSendIgnoresNonErrorLog(t *testing.T) {
 	}
 }
 
+func TestSendConfiguredSeverityLevel(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	defer server.Close()
+	client, err := New(config.WebhookConfig{URL: server.URL, SeverityLevels: []string{"WARN"}, Timeout: config.Duration{Duration: time.Second}, MaxContentLength: 4000}, logging.Nop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Send(context.Background(), model.Record{SeverityText: "WARN", Body: "capacity is high"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Send(context.Background(), model.Record{SeverityText: "ERROR", Body: "request failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
 func TestSendIgnoresBodyContainingConfiguredKeyword(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))

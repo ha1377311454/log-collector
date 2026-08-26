@@ -109,3 +109,14 @@ func TestRejectsEmptyWebhookErrorTypeKeyword(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestRejectsUnknownWebhookSeverityLevel(t *testing.T) {
+	cfg := defaults()
+	cfg.Export.Endpoint = "http://localhost:4318"
+	cfg.Webhook.Enabled = true
+	cfg.Webhook.URL = "https://example.com/webhook"
+	cfg.Webhook.SeverityLevels = []string{"verbose"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}

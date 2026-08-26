@@ -191,6 +191,9 @@ wechat_webhook:
   enabled: true
   url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=replace-me'
   title: 日志异常告警
+  severity_levels:
+    - ERROR
+    - FATAL
   ignore_keywords:
     - known harmless error
     - connection reset by peer
@@ -201,7 +204,7 @@ wechat_webhook:
   max_content_length: 4000
 ```
 
-只有解析为 `ERROR` 或 `FATAL` 的日志会推送。若合并后的完整正文包含 `ignore_keywords` 中任一关键词，则跳过推送；匹配使用 `strings.Contains`，区分大小写，空值和重复值会被配置校验拒绝。将采集器自身的 `log.level` 设置为 `debug` 后，会输出被忽略日志的命中关键词、级别、来源、文件、请求 ID 和完整正文。
+只有解析级别包含在 `severity_levels` 中的日志会推送，默认值为 `ERROR` 和 `FATAL`；可选值为 `TRACE`、`DEBUG`、`INFO`、`WARN`、`ERROR`、`FATAL`。若合并后的完整正文包含 `ignore_keywords` 中任一关键词，则跳过推送；匹配使用 `strings.Contains`，区分大小写，空值和重复值会被配置校验拒绝。将采集器自身的 `log.level` 设置为 `debug` 后，会输出被忽略日志的命中关键词、级别、来源、文件、请求 ID 和完整正文。
 
 `error_type_keywords` 用于给通知分类，不会过滤通知。正文命中列表中的关键词时，按配置顺序取第一个匹配项，在企业微信通知中增加“错误类型”字段；没有命中时不显示该字段。匹配同样区分大小写。
 
@@ -214,7 +217,7 @@ OTLP 和企业微信可以同时开启，也可以只开启其中一个；两者
 采集器使用 `fsnotify` 监听配置文件所在目录，并对文件保存事件进行 300ms 防抖。修改配置文件后无需重启即可生效的配置包括：
 
 - `log.level`
-- `wechat_webhook` 下的全部配置，包括开关、地址、标题、超时、内容长度、忽略关键词和错误类型关键词
+- `wechat_webhook` 下的全部配置，包括开关、地址、标题、推送级别、超时、内容长度、忽略关键词和错误类型关键词
 
 | 配置项 | 是否热加载 | 生效方式 |
 | --- | --- | --- |
@@ -222,6 +225,7 @@ OTLP 和企业微信可以同时开启，也可以只开启其中一个；两者
 | `wechat_webhook.enabled` | 是 | 启用或关闭后续 Webhook 推送 |
 | `wechat_webhook.url` | 是 | 新建 Webhook Client 后原子替换 |
 | `wechat_webhook.title` | 是 | 后续通知使用新标题 |
+| `wechat_webhook.severity_levels` | 是 | 后续日志使用新的推送级别列表 |
 | `wechat_webhook.timeout` | 是 | 新建 HTTP Client 后生效 |
 | `wechat_webhook.max_content_length` | 是 | 后续通知使用新的内容限制 |
 | `wechat_webhook.ignore_keywords` | 是 | 后续日志使用新忽略列表 |

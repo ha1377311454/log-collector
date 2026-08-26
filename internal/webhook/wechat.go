@@ -18,7 +18,7 @@ import (
 	"log-collector/internal/model"
 )
 
-// Client 通过企业微信群机器人 Webhook 推送 ERROR 和 FATAL 日志。
+// Client 通过企业微信群机器人 Webhook 推送配置级别的日志。
 type Client struct {
 	url               string
 	title             string
@@ -28,6 +28,7 @@ type Client struct {
 	now               func() time.Time
 	ignoreKeywords    []string
 	errorTypeKeywords []string
+	severityLevels    map[string]struct{}
 	log               *logging.Logger
 }
 
@@ -71,6 +72,14 @@ func New(cfg config.WebhookConfig, logger *logging.Logger) (*Client, error) {
 	if logger == nil {
 		logger = logging.Nop()
 	}
+	severityLevels := cfg.SeverityLevels
+	if len(severityLevels) == 0 {
+		severityLevels = []string{"ERROR", "FATAL"}
+	}
+	levelSet := make(map[string]struct{}, len(severityLevels))
+	for _, level := range severityLevels {
+		levelSet[strings.ToUpper(level)] = struct{}{}
+	}
 	return &Client{
 		url:               cfg.URL,
 		title:             cfg.Title,
@@ -80,13 +89,14 @@ func New(cfg config.WebhookConfig, logger *logging.Logger) (*Client, error) {
 		now:               time.Now,
 		ignoreKeywords:    append([]string(nil), cfg.IgnoreKeywords...),
 		errorTypeKeywords: append([]string(nil), cfg.ErrorTypeKeywords...),
+		severityLevels:    levelSet,
 		log:               logger,
 	}, nil
 }
 
-// Send 忽略非错误级别；错误日志使用企业微信群机器人 markdown 消息格式同步推送。
+// Send 忽略未配置级别；匹配的日志使用企业微信群机器人 markdown 消息格式同步推送。
 func (c *Client) Send(ctx context.Context, record model.Record) error {
-	if record.SeverityText != "ERROR" && record.SeverityText != "FATAL" {
+	if _, enabled := c.severityLevels[record.SeverityText]; !enabled {
 		return nil
 	}
 	if keyword, ignored := c.ignoredKeyword(record.Body); ignored {

@@ -51,6 +51,7 @@ func TestRestartRequiredChangesIgnoresDynamicConfiguration(t *testing.T) {
 	next := active
 	next.Log.Level = "debug"
 	next.Webhook.Title = "new"
+	next.Webhook.SeverityLevels = []string{"WARN", "ERROR", "FATAL"}
 	next.Webhook.IgnoreKeywords = []string{"ignored"}
 	if changes := restartRequiredChanges(active, next); len(changes) != 0 {
 		t.Fatalf("unexpected restart changes: %v", changes)

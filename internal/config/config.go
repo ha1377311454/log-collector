@@ -138,6 +138,7 @@ type WebhookConfig struct {
 	Enabled           bool     `yaml:"enabled"`
 	URL               string   `yaml:"url"`
 	Title             string   `yaml:"title"`
+	SeverityLevels    []string `yaml:"severity_levels"`
 	IgnoreKeywords    []string `yaml:"ignore_keywords"`
 	ErrorTypeKeywords []string `yaml:"error_type_keywords"`
 	Timeout           Duration `yaml:"timeout"`
@@ -189,7 +190,7 @@ func defaults() Config {
 		FlowControl: FlowControlConfig{RatePerSecond: 1000, Burst: 2000, Mode: "block", ReportInterval: Duration{10 * time.Second}},
 		Export: ExportConfig{Enabled: true, Timeout: Duration{10 * time.Second}, BatchSize: 500, MaxBatchBytes: 4 * 1024 * 1024, FlushInterval: Duration{time.Second}, QueueSize: 10000, MaxQueueBytes: 64 * 1024 * 1024,
 			Retry: RetryConfig{Enabled: true, Initial: Duration{time.Second}, MaxInterval: Duration{30 * time.Second}, MaxElapsed: Duration{5 * time.Minute}}},
-		Webhook: WebhookConfig{Title: "日志异常告警", Timeout: Duration{5 * time.Second}, MaxContentLength: 4000},
+		Webhook: WebhookConfig{Title: "日志异常告警", SeverityLevels: []string{"ERROR", "FATAL"}, Timeout: Duration{5 * time.Second}, MaxContentLength: 4000},
 	}
 }
 
@@ -236,6 +237,12 @@ func (c Config) Validate() error {
 		}
 		if c.Webhook.Timeout.Duration <= 0 || c.Webhook.MaxContentLength <= 0 {
 			return errors.New("wechat_webhook timeout and max_content_length must be positive")
+		}
+		if len(c.Webhook.SeverityLevels) == 0 {
+			return errors.New("wechat_webhook.severity_levels must not be empty")
+		}
+		if err := validateSeverityLevels("wechat_webhook.severity_levels", c.Webhook.SeverityLevels); err != nil {
+			return err
 		}
 		if err := validateKeywordList("wechat_webhook.ignore_keywords", c.Webhook.IgnoreKeywords); err != nil {
 			return err
@@ -332,16 +339,20 @@ func validateKeywordList(field string, keywords []string) error {
 }
 
 func validateDropLevels(levels []string) error {
+	return validateSeverityLevels("drop_levels", levels)
+}
+
+func validateSeverityLevels(field string, levels []string) error {
 	seen := make(map[string]struct{}, len(levels))
 	for _, level := range levels {
 		normalized := strings.ToUpper(level)
 		switch normalized {
 		case "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL":
 		default:
-			return fmt.Errorf("drop level %q must be TRACE, DEBUG, INFO, WARN, ERROR or FATAL", level)
+			return fmt.Errorf("%s value %q must be TRACE, DEBUG, INFO, WARN, ERROR or FATAL", field, level)
 		}
 		if _, exists := seen[normalized]; exists {
-			return fmt.Errorf("duplicate drop level %q", level)
+			return fmt.Errorf("duplicate %s value %q", field, level)
 		}
 		seen[normalized] = struct{}{}
 	}

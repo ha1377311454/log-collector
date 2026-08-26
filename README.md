@@ -125,6 +125,18 @@ attribute_extractors:
 
 例如日志片段 `DEBUG - qzJFsZlazjUljpmV -` 会生成 `request.id=qzJFsZlazjUljpmV`。抽取在多行合并完成后执行，因此正则可以匹配完整日志正文。
 
+### Trace ID 抽取
+
+进程、文件和容器规则都可以通过 `trace_id_extractor` 从完整日志正文中抽取 Trace ID，并写入 OTLP 协议的 `LogRecord.TraceId` 字段，而不是普通 LogRecord Attribute。正则的第一个捕获组作为 Trace ID 原始值：
+
+```yaml
+trace_id_extractor:
+  pattern: '\btrace_id[=:]\s*([0-9a-fA-F]{16}|[0-9a-fA-F]{32})\b'
+  completion: true
+```
+
+`completion` 默认为 `false`：关闭时直接将捕获到的字符串转换为字节写入 `LogRecord.TraceId`。开启时使用十六进制补全模式：32 位值直接转换为 16 字节 Trace ID，16 位值在左侧补 8 个零字节；格式错误或全零的值不会设置 `LogRecord.TraceId`。无论是否开启补全，没有匹配时都不会设置该字段。
+
 ### 按日志级别丢弃
 
 每个进程、文件或容器规则都可以配置不发送的日志级别：

@@ -52,6 +52,15 @@ func TestRejectsAttributeExtractorWithoutCaptureGroup(t *testing.T) {
 	}
 }
 
+func TestRejectsTraceIDExtractorWithoutCaptureGroup(t *testing.T) {
+	cfg := defaults()
+	cfg.Export.Endpoint = "http://localhost:4318"
+	cfg.Sources.Files = []FileRule{{Name: "x", Include: []string{"*.log"}, TraceID: TraceIDExtractorConfig{Pattern: `trace_id=[0-9a-f]+`}}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
 func TestRejectsUnknownDropLevel(t *testing.T) {
 	cfg := defaults()
 	cfg.Export.Endpoint = "http://localhost:4318"

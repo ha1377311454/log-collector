@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -339,8 +340,37 @@ func preparedRecord(target model.FileTarget, body string, timestamp time.Time, a
 			attrs[extractor.Key] = match[1]
 		}
 	}
+	var traceID []byte
+	if target.TraceIDExtractor != nil {
+		match := target.TraceIDExtractor.FindStringSubmatch(body)
+		if len(match) > 1 {
+			traceID = parseTraceID(match[1], target.TraceIDCompletion)
+		}
+	}
 	_, dropped := target.DropLevels[severityText]
-	return model.Record{Body: body, Timestamp: timestamp, SeverityText: severityText, SeverityNumber: severityNumber, Dropped: dropped, Attributes: attrs, ResourceAttributes: target.ResourceAttributes, ResourceKey: target.ResourceKey}
+	return model.Record{Body: body, Timestamp: timestamp, SeverityText: severityText, SeverityNumber: severityNumber, Dropped: dropped, TraceID: traceID, Attributes: attrs, ResourceAttributes: target.ResourceAttributes, ResourceKey: target.ResourceKey}
+}
+
+func parseTraceID(value string, completion bool) []byte {
+	if !completion {
+		return []byte(value)
+	}
+	if len(value) == 16 {
+		value = "0000000000000000" + value
+	}
+	if len(value) != 32 {
+		return nil
+	}
+	traceID, err := hex.DecodeString(value)
+	if err != nil {
+		return nil
+	}
+	for _, b := range traceID {
+		if b != 0 {
+			return traceID
+		}
+	}
+	return nil
 }
 
 // parseSeverity 从日志首行识别常见级别，并映射到 OTLP SeverityNumber 的基础档位。

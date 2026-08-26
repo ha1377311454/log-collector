@@ -82,6 +82,7 @@ type ProcessRule struct {
 	Multiline    MultilineConfig            `yaml:"multiline"`
 	Attributes   map[string]string          `yaml:"attributes"`
 	Extractors   []AttributeExtractorConfig `yaml:"attribute_extractors"`
+	TraceID      TraceIDExtractorConfig     `yaml:"trace_id_extractor"`
 	DropLevels   []string                   `yaml:"drop_levels"`
 }
 
@@ -95,6 +96,7 @@ type FileRule struct {
 	Multiline  MultilineConfig            `yaml:"multiline"`
 	Attributes map[string]string          `yaml:"attributes"`
 	Extractors []AttributeExtractorConfig `yaml:"attribute_extractors"`
+	TraceID    TraceIDExtractorConfig     `yaml:"trace_id_extractor"`
 	DropLevels []string                   `yaml:"drop_levels"`
 }
 
@@ -102,6 +104,12 @@ type FileRule struct {
 type AttributeExtractorConfig struct {
 	Key     string `yaml:"key"`
 	Pattern string `yaml:"pattern"`
+}
+
+// TraceIDExtractorConfig 使用正则表达式的第一个捕获组生成 OTLP LogRecord.TraceId。
+type TraceIDExtractorConfig struct {
+	Pattern    string `yaml:"pattern"`
+	Completion bool   `yaml:"completion"`
 }
 
 // MultilineConfig 定义多行合并规则；匹配 StartPattern 的行开始一条新日志，其他行续接上一条。
@@ -270,6 +278,9 @@ func (c Config) Validate() error {
 		if err := validateAttributeExtractors(r.Extractors); err != nil {
 			return fmt.Errorf("process rule %q: %w", r.Name, err)
 		}
+		if err := validateTraceIDExtractor(r.TraceID); err != nil {
+			return fmt.Errorf("process rule %q: %w", r.Name, err)
+		}
 		if err := validateDropLevels(r.DropLevels); err != nil {
 			return fmt.Errorf("process rule %q: %w", r.Name, err)
 		}
@@ -293,6 +304,9 @@ func (c Config) Validate() error {
 				}
 			}
 			if err := validateAttributeExtractors(r.Extractors); err != nil {
+				return fmt.Errorf("file rule %q: %w", r.Name, err)
+			}
+			if err := validateTraceIDExtractor(r.TraceID); err != nil {
 				return fmt.Errorf("file rule %q: %w", r.Name, err)
 			}
 			if err := validateDropLevels(r.DropLevels); err != nil {
@@ -351,6 +365,20 @@ func validateAttributeExtractors(extractors []AttributeExtractorConfig) error {
 		if compiled.NumSubexp() < 1 {
 			return fmt.Errorf("attribute extractor %q pattern must contain a capture group", extractor.Key)
 		}
+	}
+	return nil
+}
+
+func validateTraceIDExtractor(extractor TraceIDExtractorConfig) error {
+	if extractor.Pattern == "" {
+		return nil
+	}
+	compiled, err := regexp.Compile(extractor.Pattern)
+	if err != nil {
+		return fmt.Errorf("trace_id_extractor has invalid pattern: %w", err)
+	}
+	if compiled.NumSubexp() < 1 {
+		return errors.New("trace_id_extractor pattern must contain a capture group")
 	}
 	return nil
 }

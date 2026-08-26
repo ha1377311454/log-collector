@@ -250,7 +250,7 @@ func BuildRequest(records []model.Record) *collectorlogsv1.ExportLogsServiceRequ
 	}
 	groups := make(map[string]*group)
 	for _, r := range records {
-		lr := &logsv1.LogRecord{TimeUnixNano: uint64(r.Timestamp.UnixNano()), ObservedTimeUnixNano: uint64(r.ObservedTimestamp.UnixNano()), SeverityText: r.SeverityText, SeverityNumber: logsv1.SeverityNumber(r.SeverityNumber), Body: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: r.Body}}, Attributes: keyValues(r.Attributes)}
+		lr := &logsv1.LogRecord{TimeUnixNano: uint64(r.Timestamp.UnixNano()), ObservedTimeUnixNano: uint64(r.ObservedTimestamp.UnixNano()), SeverityText: r.SeverityText, SeverityNumber: logsv1.SeverityNumber(r.SeverityNumber), Body: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: r.Body}}, Attributes: keyValues(r.Attributes), TraceId: r.TraceID}
 		key := r.ResourceKey
 		if key == "" {
 			key = attributeKey(r.ResourceAttributes)
@@ -296,7 +296,7 @@ func (e *Exporter) releaseQueueBytes(size int64) {
 
 // recordSize 是内存保护用的保守估算，包含正文、属性和值以及固定结构开销。
 func recordSize(record model.Record) int64 {
-	size := int64(len(record.Body) + 128)
+	size := int64(len(record.Body) + len(record.TraceID) + 128)
 	for k, v := range record.Attributes {
 		size += int64(len(k) + len(v) + 32)
 	}

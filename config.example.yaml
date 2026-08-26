@@ -80,6 +80,14 @@ sources:
       attribute_extractors:
         - key: request.id
           pattern: '\b(?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s+-\s+(\S+)\s+-'
+      # 从第一个捕获组生成 OTLP LogRecord.TraceId；支持 16 或 32 位十六进制字符串。
+      trace_id_extractor:
+        pattern: '\btrace_id[=:]\s*([0-9a-fA-F]{16}|[0-9a-fA-F]{32})\b'
+        # 是否开启十六进制补全模式；默认 false。
+        # false：将捕获到的字符串直接转换为 []byte 写入 OTLP LogRecord.TraceId。
+        # true：32 位十六进制值直接解码；16 位值左侧补 16 个十六进制零后解码为 16 字节。
+        # 补全模式下，长度错误、非十六进制或全零值不会设置 TraceId。
+        completion: true
       # 可选：命中这些标准化日志级别的记录会推进读取位点，但不会发送。
       drop_levels:
         - TRACE

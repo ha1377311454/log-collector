@@ -23,13 +23,15 @@ type compiledProcessRule struct {
 	rule                            config.ProcessRule
 	comm, cmdline, include, exclude *regexp.Regexp
 	extractors                      []model.AttributeExtractor
+	traceIDExtractor                *regexp.Regexp
 	dropLevels                      map[string]struct{}
 }
 
 type compiledFileRule struct {
-	rule       config.FileRule
-	extractors []model.AttributeExtractor
-	dropLevels map[string]struct{}
+	rule             config.FileRule
+	extractors       []model.AttributeExtractor
+	traceIDExtractor *regexp.Regexp
+	dropLevels       map[string]struct{}
 }
 
 // Discovery 使用 gopsutil 获取进程快照，并结合文件 glob 发现日志源。
@@ -64,6 +66,9 @@ func New(cfg config.SourcesConfig, cacheTTL time.Duration, logger *logging.Logge
 		if compiled.extractors, err = compileExtractors(rule.Extractors); err != nil {
 			return nil, err
 		}
+		if compiled.traceIDExtractor, err = optionalRegexp(rule.TraceID.Pattern); err != nil {
+			return nil, err
+		}
 		compiled.dropLevels = dropLevels(rule.DropLevels)
 		d.processRules = append(d.processRules, compiled)
 	}
@@ -72,14 +77,22 @@ func New(cfg config.SourcesConfig, cacheTTL time.Duration, logger *logging.Logge
 		if err != nil {
 			return nil, err
 		}
-		d.files = append(d.files, compiledFileRule{rule: rule, extractors: extractors, dropLevels: dropLevels(rule.DropLevels)})
+		traceIDExtractor, err := optionalRegexp(rule.TraceID.Pattern)
+		if err != nil {
+			return nil, err
+		}
+		d.files = append(d.files, compiledFileRule{rule: rule, extractors: extractors, traceIDExtractor: traceIDExtractor, dropLevels: dropLevels(rule.DropLevels)})
 	}
 	for _, rule := range cfg.Containers {
 		extractors, err := compileExtractors(rule.Extractors)
 		if err != nil {
 			return nil, err
 		}
-		d.containers = append(d.containers, compiledFileRule{rule: rule, extractors: extractors, dropLevels: dropLevels(rule.DropLevels)})
+		traceIDExtractor, err := optionalRegexp(rule.TraceID.Pattern)
+		if err != nil {
+			return nil, err
+		}
+		d.containers = append(d.containers, compiledFileRule{rule: rule, extractors: extractors, traceIDExtractor: traceIDExtractor, dropLevels: dropLevels(rule.DropLevels)})
 	}
 	return d, nil
 }
@@ -162,7 +175,7 @@ func (d *Discovery) discoverProcess(ctx context.Context, p *process.Process) ([]
 			attrs["process.pid"] = fmt.Sprintf("%d", p.Pid)
 			attrs["process.name"] = comm
 			attrs["process.command_line"] = cmdline
-			out = append(out, model.FileTarget{Path: sourcePath, ReportedPath: path, SourceType: "process", Rule: rule.rule.Name, StartAt: startAt(rule.rule.StartAt), Multiline: multiline(rule.rule.Multiline), Attributes: attrs, Extractors: rule.extractors, DropLevels: rule.dropLevels})
+			out = append(out, model.FileTarget{Path: sourcePath, ReportedPath: path, SourceType: "process", Rule: rule.rule.Name, StartAt: startAt(rule.rule.StartAt), Multiline: multiline(rule.rule.Multiline), Attributes: attrs, Extractors: rule.extractors, TraceIDExtractor: rule.traceIDExtractor, TraceIDCompletion: rule.rule.TraceID.Completion, DropLevels: rule.dropLevels})
 			count++
 			if rule.rule.MaxFiles > 0 && count >= rule.rule.MaxFiles {
 				break
@@ -264,7 +277,7 @@ func discoverFiles(compiled compiledFileRule, sourceType string) []model.FileTar
 			if sourceType == "container" {
 				addContainerAttributes(attrs, path)
 			}
-			out = append(out, model.FileTarget{Path: path, SourceType: sourceType, Rule: rule.Name, StartAt: startAt(rule.StartAt), Format: rule.Format, Multiline: multiline(rule.Multiline), Attributes: attrs, Extractors: compiled.extractors, DropLevels: compiled.dropLevels})
+			out = append(out, model.FileTarget{Path: path, SourceType: sourceType, Rule: rule.Name, StartAt: startAt(rule.StartAt), Format: rule.Format, Multiline: multiline(rule.Multiline), Attributes: attrs, Extractors: compiled.extractors, TraceIDExtractor: compiled.traceIDExtractor, TraceIDCompletion: rule.TraceID.Completion, DropLevels: compiled.dropLevels})
 		}
 	}
 	return out

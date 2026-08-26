@@ -109,6 +109,37 @@ func TestPreparedRecordExtractsConfiguredAttribute(t *testing.T) {
 	}
 }
 
+func TestPreparedRecordExtractsOTLPTraceID(t *testing.T) {
+	target := model.FileTarget{
+		Path:              "/tmp/app.log",
+		SourceType:        "file",
+		Rule:              "app",
+		TraceIDExtractor:  regexp.MustCompile(`tingyun\.trace_id:([0-9a-fA-F]+)`),
+		TraceIDCompletion: true,
+	}
+	record := preparedRecord(target, "[tingyun.trace_id:57c52734aa944c84]", time.Time{}, nil)
+	if got := fmt.Sprintf("%x", record.TraceID); got != "000000000000000057c52734aa944c84" {
+		t.Fatalf("TraceID = %q", got)
+	}
+}
+
+func TestPreparedRecordIgnoresInvalidOTLPTraceID(t *testing.T) {
+	target := model.FileTarget{TraceIDExtractor: regexp.MustCompile(`trace_id:([^ ]+)`), TraceIDCompletion: true}
+	for _, body := range []string{"trace_id:not-hex", "trace_id:0000000000000000", "trace_id:1234"} {
+		if record := preparedRecord(target, body, time.Time{}, nil); len(record.TraceID) != 0 {
+			t.Fatalf("body %q generated TraceID %x", body, record.TraceID)
+		}
+	}
+}
+
+func TestPreparedRecordWritesRawTraceIDWhenCompletionDisabled(t *testing.T) {
+	target := model.FileTarget{TraceIDExtractor: regexp.MustCompile(`trace_id:([^ ]+)`)}
+	record := preparedRecord(target, "trace_id:57c52734aa944c84", time.Time{}, nil)
+	if got := string(record.TraceID); got != "57c52734aa944c84" {
+		t.Fatalf("TraceID = %q", got)
+	}
+}
+
 func TestConfiguredSeverityIsDroppedBeforeEmit(t *testing.T) {
 	target := model.FileTarget{
 		Path:       "/tmp/app.log",

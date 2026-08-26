@@ -10,15 +10,17 @@ import (
 type FileTarget struct {
 	Path string
 	// ReportedPath 保留目标进程看到的原始路径；Path 是 Tailer 实际读取的路径。
-	ReportedPath string
-	SourceType   string
-	Rule         string
-	StartAt      string
-	Format       string
-	Multiline    Multiline
-	Attributes   map[string]string
-	Extractors   []AttributeExtractor
-	DropLevels   map[string]struct{}
+	ReportedPath      string
+	SourceType        string
+	Rule              string
+	StartAt           string
+	Format            string
+	Multiline         Multiline
+	Attributes        map[string]string
+	Extractors        []AttributeExtractor
+	TraceIDExtractor  *regexp.Regexp
+	TraceIDCompletion bool
+	DropLevels        map[string]struct{}
 	// ResourceAttributes 和 ResourceKey 在发现阶段预计算，避免每条日志重复复制和排序。
 	ResourceAttributes map[string]string
 	ResourceKey        string
@@ -44,6 +46,7 @@ type Record struct {
 	SeverityText       string
 	SeverityNumber     int32
 	Dropped            bool
+	TraceID            []byte
 	Attributes         map[string]string
 	ResourceAttributes map[string]string
 	ResourceKey        string

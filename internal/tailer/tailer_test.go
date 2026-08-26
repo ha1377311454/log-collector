@@ -165,7 +165,7 @@ func TestConfiguredSeverityIsDroppedBeforeEmit(t *testing.T) {
 }
 
 func TestJavaErrorStackTraceMergesLinesWithoutTimestamp(t *testing.T) {
-	const startPattern = `^(?:(?:\d{4}[-/]\d{2}[-/]\d{2})[ T])?\d{2}:\d{2}:\d{2}(?:[.,]\d{3,9})?(?:Z|[+-]\d{2}:?\d{2})?`
+	const startPattern = `^(?:(?:(?:\d{4}[-/])?\d{2}[-/]\d{2})[ T])?\d{2}:\d{2}:\d{2}(?:[.,]\d{3,9})?(?:Z|[+-]\d{2}:?\d{2})?`
 	continuations := []string{
 		"com.example.application.QueryException: query expression is invalid",
 		"\tat com.example.application.QueryService.execute(QueryService.java:72)",
@@ -177,6 +177,7 @@ func TestJavaErrorStackTraceMergesLinesWithoutTimestamp(t *testing.T) {
 		second string
 	}{
 		{name: "time with milliseconds", first: "11:13:10.692", second: "11:13:23.469"},
+		{name: "month-day time without year", first: "08-25 18:51:22", second: "08-25 18:51:23"},
 		{name: "date time with milliseconds", first: "2026-08-24 11:13:10.692", second: "2026-08-24 11:13:23.469"},
 		{name: "ISO time with nanoseconds and UTC", first: "2026-08-24T11:13:10.692123456Z", second: "2026-08-24T11:13:23.469123456Z"},
 		{name: "slash date with comma milliseconds", first: "2026/08/24 11:13:10,692", second: "2026/08/24 11:13:23,469"},

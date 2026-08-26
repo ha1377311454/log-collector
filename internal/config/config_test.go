@@ -23,6 +23,26 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadParsesCustomExportEndpoint(t *testing.T) {
+	const endpoint = "http://127.0.0.1:18080/telemetry/v1/logs"
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("export:\n  enabled: true\n  endpoint: " + endpoint + "\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Export.Enabled {
+		t.Fatal("export.enabled = false, want true")
+	}
+	if cfg.Export.Endpoint != endpoint {
+		t.Fatalf("export.endpoint = %q, want %q", cfg.Export.Endpoint, endpoint)
+	}
+}
+
 func TestRejectsInvalidMultilineStartPattern(t *testing.T) {
 	cfg := defaults()
 	cfg.Export.Endpoint = "http://localhost:4318"

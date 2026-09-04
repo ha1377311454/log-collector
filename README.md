@@ -339,6 +339,7 @@ docker run --rm \
 - 宿主机 `/var/log` 只读挂载，用于读取 Kubernetes CRI 容器日志。
 - 宿主机 `/var/lib/log-collector` 读写挂载，用于按节点持久化读取位点。
 - ConfigMap 挂载到 `/etc/log-collector`，提供采集配置。
+- 容器环境变量 `TZ=Asia/Shanghai`，用于让 Webhook 告警时间按北京时间展示。
 
 DaemonSet 需要读取节点日志并写入由 `hostPath` 创建的位点目录，因此示例以 UID 0 运行，但关闭权限提升、删除全部 Linux capabilities、使用只读根文件系统，并且没有启用 `privileged`。
 

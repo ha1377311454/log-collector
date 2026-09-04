@@ -97,6 +97,9 @@ spec:
             - -config
             - /etc/log-collector/config.yaml
           env:
+            # 统一容器本地时区，Webhook 告警时间按北京时间展示。
+            - name: TZ
+              value: Asia/Shanghai
             # DaemonSet Pod 的 hostname 是 Pod 名；通过 Downward API 注入所在节点 IP，供告警“主机”字段使用。
             - name: NODE_IP
               valueFrom:

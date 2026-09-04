@@ -138,6 +138,7 @@ type WebhookConfig struct {
 	Enabled           bool     `yaml:"enabled"`
 	URL               string   `yaml:"url"`
 	Title             string   `yaml:"title"`
+	Environment       string   `yaml:"environment"`
 	SeverityLevels    []string `yaml:"severity_levels"`
 	IgnoreKeywords    []string `yaml:"ignore_keywords"`
 	ErrorTypeKeywords []string `yaml:"error_type_keywords"`

@@ -64,6 +64,8 @@ data:
 
     wechat_webhook:
       enabled: false
+      # 告警中显示在“主机”上方，由部署用户按实际环境修改。
+      environment: production
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -94,6 +96,12 @@ spec:
           args:
             - -config
             - /etc/log-collector/config.yaml
+          env:
+            # DaemonSet Pod 的 hostname 是 Pod 名；通过 Downward API 注入所在节点 IP，供告警“主机”字段使用。
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

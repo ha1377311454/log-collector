@@ -172,11 +172,13 @@ export:
     max_elapsed_time: 5m
 
 # [整个区块支持热加载] 企业微信群机器人 Webhook，只推送 severity_levels 配置的日志级别。
-# 修改 enabled、title、severity_levels、ignore_keywords、error_type_keywords、url、timeout、max_content_length 后无需重启。
+# 修改 enabled、title、environment、severity_levels、ignore_keywords、error_type_keywords、url、timeout、max_content_length 后无需重启。
 wechat_webhook:
   enabled: false
   # Markdown 消息顶部标题。
   title: 日志异常告警
+  # 可选。显示在告警“主机”字段上方，例如生产环境、测试环境。
+  environment: ''
   # 推送的日志级别，可选 TRACE、DEBUG、INFO、WARN、ERROR、FATAL。
   severity_levels:
     - ERROR

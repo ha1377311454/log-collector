@@ -191,6 +191,7 @@ wechat_webhook:
   enabled: true
   url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=replace-me'
   title: 日志异常告警
+  environment: production
   severity_levels:
     - ERROR
     - FATAL
@@ -208,7 +209,7 @@ wechat_webhook:
 
 `error_type_keywords` 用于给通知分类，不会过滤通知。正文命中列表中的关键词时，按配置顺序取第一个匹配项，在企业微信通知中增加“错误类型”字段；没有命中时不显示该字段。匹配同样区分大小写。
 
-消息使用 Markdown 告警样式，包含主机、时间、日志级别、来源规则、文件路径、可选的 `request.id` 和多行合并后的正文。正文按原始换行逐行输出，不插入 `<br>`，并转义反引号以避免 SQL 字段被渲染成行内代码。主机优先读取 `host.name` Resource 属性，否则使用采集器所在主机名。Webhook 地址包含机器人密钥，不会被程序写入错误日志；生产环境应通过部署系统注入并限制配置文件权限。
+消息使用 Markdown 告警样式，包含可选的环境、主机、时间、日志级别、来源规则、文件路径、可选的 `request.id` 和多行合并后的正文。`environment` 非空时显示在“主机”上方，适合由部署用户填写 `production`、`test` 等环境标识；留空时不显示。正文按原始换行逐行输出，不插入 `<br>`，并转义反引号以避免 SQL 字段被渲染成行内代码。主机优先读取 `host.name` Resource 属性；没有该属性时优先使用 `NODE_IP` 环境变量，否则回退到采集器所在主机名。Kubernetes DaemonSet 示例通过 Downward API 将 `status.hostIP` 注入 `NODE_IP`，避免 Pod hostname 被显示为主机。Webhook 地址包含机器人密钥，不会被程序写入错误日志；生产环境应通过部署系统注入并限制配置文件权限。
 
 OTLP 和企业微信可以同时开启，也可以只开启其中一个；两者同时关闭会导致启动配置校验失败。两者同时开启时，Webhook 暂时失败不会阻断 OTLP 输出；仅启用 Webhook 时，推送失败会返回错误，避免日志在没有任何成功输出的情况下继续推进位点。
 
@@ -225,6 +226,7 @@ OTLP 和企业微信可以同时开启，也可以只开启其中一个；两者
 | `wechat_webhook.enabled` | 是 | 启用或关闭后续 Webhook 推送 |
 | `wechat_webhook.url` | 是 | 新建 Webhook Client 后原子替换 |
 | `wechat_webhook.title` | 是 | 后续通知使用新标题 |
+| `wechat_webhook.environment` | 是 | 后续通知显示新的环境标识，留空则不显示 |
 | `wechat_webhook.severity_levels` | 是 | 后续日志使用新的推送级别列表 |
 | `wechat_webhook.timeout` | 是 | 新建 HTTP Client 后生效 |
 | `wechat_webhook.max_content_length` | 是 | 后续通知使用新的内容限制 |

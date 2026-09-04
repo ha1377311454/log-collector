@@ -45,7 +45,7 @@ func TestSendErrorLogAsWeChatMarkdownMessage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(config.WebhookConfig{URL: server.URL, Title: "API 日志告警", ErrorTypeKeywords: []string{"DatabaseException"}, Timeout: config.Duration{Duration: time.Second}, MaxContentLength: 4000}, logging.Nop())
+	client, err := New(config.WebhookConfig{URL: server.URL, Title: "API 日志告警", Environment: "生产环境", ErrorTypeKeywords: []string{"DatabaseException"}, Timeout: config.Duration{Duration: time.Second}, MaxContentLength: 4000}, logging.Nop())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +60,46 @@ func TestSendErrorLogAsWeChatMarkdownMessage(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+func TestContentRendersConfiguredEnvironmentAboveHost(t *testing.T) {
+	client, err := New(config.WebhookConfig{
+		URL:              "https://example.com/webhook",
+		Environment:      "测试环境",
+		Timeout:          config.Duration{Duration: time.Second},
+		MaxContentLength: 4000,
+	}, logging.Nop())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := client.content(model.Record{
+		SeverityText:       "ERROR",
+		Body:               "request failed",
+		ResourceAttributes: map[string]string{hostNameKey: "10.0.0.12"},
+	})
+	environmentIndex := strings.Index(content, "**环境：** 测试环境")
+	hostIndex := strings.Index(content, "**主机：** 10.0.0.12")
+	if environmentIndex < 0 || hostIndex < 0 || environmentIndex >= hostIndex {
+		t.Fatalf("environment is not rendered above host: %s", content)
+	}
+}
+
+func TestNewUsesKubernetesNodeIPAsHostFallback(t *testing.T) {
+	t.Setenv(nodeIPEnv, "10.0.0.12")
+	client, err := New(config.WebhookConfig{
+		URL:              "https://example.com/webhook",
+		Timeout:          config.Duration{Duration: time.Second},
+		MaxContentLength: 4000,
+	}, logging.Nop())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := client.content(model.Record{SeverityText: "ERROR", Body: "request failed"})
+	if !strings.Contains(content, "**主机：** 10.0.0.12") {
+		t.Fatalf("message does not use Kubernetes node IP: %s", content)
 	}
 }
 

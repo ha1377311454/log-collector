@@ -22,6 +22,7 @@ import (
 type Client struct {
 	url               string
 	title             string
+	environment       string
 	hostname          string
 	maxContentLength  int
 	http              *http.Client
@@ -34,6 +35,7 @@ type Client struct {
 
 const (
 	defaultTitle   = "日志异常告警"
+	nodeIPEnv      = "NODE_IP"
 	warningOpen    = `<font color="warning">`
 	warningClose   = `</font>`
 	hostNameKey    = "host.name"
@@ -68,7 +70,10 @@ func New(cfg config.WebhookConfig, logger *logging.Logger) (*Client, error) {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return nil, errors.New("invalid WeChat webhook URL")
 	}
-	hostname, _ := os.Hostname()
+	hostname := strings.TrimSpace(os.Getenv(nodeIPEnv))
+	if hostname == "" {
+		hostname, _ = os.Hostname()
+	}
 	if logger == nil {
 		logger = logging.Nop()
 	}
@@ -83,6 +88,7 @@ func New(cfg config.WebhookConfig, logger *logging.Logger) (*Client, error) {
 	return &Client{
 		url:               cfg.URL,
 		title:             cfg.Title,
+		environment:       strings.TrimSpace(cfg.Environment),
 		hostname:          hostname,
 		maxContentLength:  cfg.MaxContentLength,
 		http:              &http.Client{Timeout: cfg.Timeout.Duration},
@@ -164,6 +170,7 @@ func (c *Client) content(record model.Record) string {
 	alert := markdownAlert{
 		title: firstNonEmpty(c.title, defaultTitle),
 		fields: []alertField{
+			{label: "环境", value: c.environment},
 			{label: "主机", value: firstNonEmpty(record.ResourceAttributes[hostNameKey], c.hostname)},
 			{label: "时间", value: timestamp.Format("2006-01-02 15:04:05")},
 			{label: "日志级别", value: record.SeverityText, highlighted: true},

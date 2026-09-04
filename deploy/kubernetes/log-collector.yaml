@@ -36,7 +36,7 @@ data:
       #   - name: application
       #     comm_regex: '^java$'
       #     cmdline_regex: 'application-name'
-      #     include_regex: '^/data/tingyun/logs/[^/]+/application\.log$'
+      #     include_regex: '^/data/app/logs/[^/]+/application\.log$'
       #     max_files: 20
       #     start_at: end
       #     multiline:
@@ -138,7 +138,7 @@ spec:
             # SYS_PTRACE 有效、能够稳定访问 /proc/<pid>/root，且没有 sources.files 依赖该目录时，
             # 可以不配置此挂载。启用时需要同时取消下面三行和 volumes 中同名 volume 的注释。
             # - name: application-logs
-            #   mountPath: /data/tingyun/logs
+            #   mountPath: /data/app/logs
             #   readOnly: true
       volumes:
         - name: config
@@ -152,10 +152,10 @@ spec:
           hostPath:
             path: /var/log
             type: Directory
-        # 将节点实际目录映射为业务进程 fd 中记录的 /data/tingyun/logs 路径。
+        # 将节点实际目录映射为业务进程 fd 中记录的 /data/app/logs 路径。
         # type: Directory 要求该目录预先存在，否则 Pod 无法创建。
         # 必须与上方 application-logs volumeMount 同时启用或同时删除。
         # - name: application-logs
         #   hostPath:
-        #     path: /data/tingyun/tingyun/logs
+        #     path: /data/app/app/logs
         #     type: Directory
